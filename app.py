@@ -220,33 +220,44 @@ def get_verdict(inbound, outbound, is_shot, is_registered, is_on_sale):
     return "대기"
 
 # ----------------------------
-# 포토촬영일 기준 촬영 스타일 수 (2025-01-01 ~ 2029-12-31)
+# 촬영 완료 판정: 리터칭완료일 등 날짜 컬럼
 # ----------------------------
+# 규칙: 리터칭완료일에 값(날짜)이 있으면 그 스타일코드는 촬영 완료(O)로 표시.
 def _find_photo_date_column(df):
-    """촬영 완료를 판정할 날짜 컬럼 후보를 찾습니다.
-
-    스파오 시트에서는 '리터칭완료일'처럼 촬영 이후 공정 날짜가 들어오는 경우가 있어,
-    해당 컬럼에 날짜가 있으면 촬영 완료(O)로 표시합니다.
-    """
+    """촬영 완료를 판정할 날짜 컬럼. 리터칭완료일 우선, 없으면 촬영일자/포토촬영일 등."""
+    # 1순위: 리터칭완료일 (값이 있으면 촬영 완료로 봄)
     for c in df.columns:
         s = str(c).strip()
+        s_nospace = s.replace(" ", "").replace("\u3000", "")
+        if "리터칭완료" in s_nospace or "retouch" in s.lower():
+            return c
+    # 2순위: 촬영일자, 포토촬영일, 보정완료일 등
+    for c in df.columns:
+        s = str(c).strip()
+        s_nospace = s.replace(" ", "").replace("\u3000", "")
         s_lower = s.lower()
         if (
-            "포토촬영" in s
-            or "촬영일" in s
-            or "리터칭완료" in s
-            or "리터칭 완료" in s
-            or "보정완료" in s
-            or "retouch" in s_lower
-            or s in ("photoShotDate", "shotDate", "retouchDoneDate", "retouch_date")
+            "포토촬영" in s_nospace
+            or "촬영일" in s_nospace
+            or "촬영일자" in s_nospace
+            or "보정완료" in s_nospace
+            or s in ("photoShotDate", "shotDate", "retouchDoneDate", "retouch_date", "촬영일자", "촬영 일자")
         ):
             return c
     return None
 
 def _parse_date_series(ser):
-    """다양한 날짜 형식 파싱 (문자열, Excel 일련번호 등)"""
+    """다양한 날짜 형식 파싱 (문자열, Excel 일련번호 등). 공백/형식 차이 관대하게 처리."""
     out = pd.to_datetime(ser, errors="coerce")
-    # 숫자(Excel 일련번호)인데 아직 NaT인 경우
+    # 파싱 실패한 셀은 앞뒤 공백 제거 후 재시도 (예: " 2025-01-15 ", "2025.1.15")
+    still_na = out.isna()
+    if still_na.any():
+        try:
+            cleaned = ser.astype(str).str.strip()
+            out2 = pd.to_datetime(cleaned, errors="coerce")
+            out = out.fillna(out2)
+        except Exception:
+            pass
     if out.isna().any():
         numeric = pd.to_numeric(ser, errors="coerce")
         valid_num = numeric.notna() & (numeric > 10000) & (numeric < 1000000)
@@ -257,9 +268,8 @@ def _parse_date_series(ser):
 def compute_shot_done_series(df):
     """촬영 완료 여부(0/1) 시리즈를 생성.
 
-    우선순위:
-    - 촬영/리터칭/보정 관련 날짜 컬럼에 유효한 날짜가 있으면 1
-    - 없으면 isShot(0/1) 값으로 폴백
+    리터칭완료일에 값(날짜)이 있으면 그 행은 촬영 완료(O).
+    리터칭완료일 컬럼이 없으면 촬영일자/포토촬영일 등 다른 날짜 컬럼, 없으면 isShot(0/1) 폴백.
     """
     date_col = _find_photo_date_column(df)
     if date_col is not None and date_col in df.columns:
