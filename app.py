@@ -148,13 +148,31 @@ def get_verdict(inbound, outbound, is_shot, is_registered, is_on_sale):
 # ----------------------------
 # 포토촬영일 기준 촬영 스타일 수 (2025-01-01 ~ 2029-12-31)
 # ----------------------------
+def _find_photo_date_column(df):
+    """포토촬영일 컬럼 후보: 이름에 포토촬영/촬영일 포함"""
+    for c in df.columns:
+        s = str(c).strip()
+        if "포토촬영" in s or "촬영일" in s or s in ("photoShotDate", "shotDate"):
+            return c
+    return None
+
+def _parse_date_series(ser):
+    """다양한 날짜 형식 파싱 (문자열, Excel 일련번호 등)"""
+    out = pd.to_datetime(ser, errors="coerce")
+    # 숫자(Excel 일련번호)인데 아직 NaT인 경우
+    if out.isna().any():
+        numeric = pd.to_numeric(ser, errors="coerce")
+        valid_num = numeric.notna() & (numeric > 10000) & (numeric < 1000000)
+        if valid_num.any():
+            out = out.fillna(pd.to_datetime(numeric[valid_num], unit="D", origin="1899-12-30"))
+    return out
+
 def count_styles_with_photo_date_in_range(df, start="2025-01-01", end="2029-12-31"):
-    """포토촬영일이 start~end 사이인 행의 고유 styleCode 개수. 해당 컬럼 없으면 0."""
-    date_candidates = [c for c in df.columns if "포토촬영" in str(c) or c == "photoShotDate"]
-    if not date_candidates:
+    """포토촬영일이 start~end 사이인 행의 고유 styleCode 개수. 해당 컬럼 없거나 유효한 값 없으면 0."""
+    date_col = _find_photo_date_column(df)
+    if date_col is None:
         return 0
-    date_col = date_candidates[0]
-    ser = pd.to_datetime(df[date_col], errors="coerce")
+    ser = _parse_date_series(df[date_col])
     start_d = pd.Timestamp(start)
     end_d = pd.Timestamp(end)
     mask = ser.notna() & (ser >= start_d) & (ser <= end_d)
@@ -366,8 +384,9 @@ flow_counts = pd.Series({
     flow: filtered_df.loc[cond]["styleCode"].nunique()
     for flow, cond in _flow_conditions.items()
 })
-# 촬영: 포토촬영일이 2025-01-01~2029-12-31인 스타일 수로 분자 사용
-flow_counts["촬영"] = count_styles_with_photo_date_in_range(filtered_df)
+# 촬영: 포토촬영일 2025-01-01~2029-12-31인 스타일 수. 해당 컬럼 없거나 0이면 isShot 기준으로 폴백
+_shot_by_date = count_styles_with_photo_date_in_range(filtered_df)
+flow_counts["촬영"] = _shot_by_date if _shot_by_date > 0 else filtered_df.loc[_flow_conditions["촬영"]]["styleCode"].nunique()
 
 if "selected_flow" not in st.session_state:
     st.session_state.selected_flow = flow_types[0]
@@ -398,9 +417,9 @@ with card_cols[-1]:
 selected_flow = st.session_state.selected_flow
 
 # 촬영: 포토촬영일 2025-01-01~2029-12-31인 행 (해당 컬럼 없으면 isShot==1)
-_shot_date_cols = [c for c in filtered_df.columns if "포토촬영" in str(c) or c == "photoShotDate"]
-if selected_flow == "촬영" and _shot_date_cols:
-    _shot_ser = pd.to_datetime(filtered_df[_shot_date_cols[0]], errors="coerce")
+_shot_date_col = _find_photo_date_column(filtered_df)
+if selected_flow == "촬영" and _shot_date_col is not None:
+    _shot_ser = _parse_date_series(filtered_df[_shot_date_col])
     _shot_mask = _shot_ser.notna() & (_shot_ser >= pd.Timestamp("2025-01-01")) & (_shot_ser <= pd.Timestamp("2029-12-31"))
     flow_df = filtered_df.loc[_shot_mask].copy()
 else:
