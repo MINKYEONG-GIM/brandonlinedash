@@ -1,8 +1,43 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import re
+import os
 
 st.set_page_config(page_title="브랜드 상품 흐름 대시보드", layout="wide")
+
+# ----------------------------
+# Google Sheets 연동
+# ----------------------------
+def get_gsheet_client(credentials_dict):
+    if credentials_dict is None:
+        return None
+    import gspread
+    from google.oauth2.service_account import Credentials
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/drive.readonly",
+    ]
+    creds = Credentials.from_service_account_info(
+        credentials_dict, scopes=scope
+    )
+    return gspread.authorize(creds)
+
+def spreadsheet_id_from_url(url):
+    m = re.search(r"/d/([a-zA-Z0-9_-]+)", url)
+    return m.group(1) if m else url.strip()
+
+def load_sheet_as_dataframe(client, spreadsheet_id, sheet_name=None):
+    try:
+        spreadsheet = client.open_by_key(spreadsheet_id)
+        worksheet = spreadsheet.worksheet(sheet_name) if sheet_name else spreadsheet.sheet1
+        rows = worksheet.get_all_values()
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows[1:], columns=rows[0])
+    except Exception as e:
+        st.error(f"시트 읽기 오류: {e}")
+        return None
 
 # ----------------------------
 # 상태 판정 로직
@@ -42,18 +77,70 @@ def compute_flow_deltas(df):
 st.title("브랜드 상품 흐름 대시보드")
 
 # ----------------------------
-# 사이드바 데이터 업로드
+# 사이드바 — Google Sheets 연결
 # ----------------------------
-st.sidebar.header("데이터 업로드")
+st.sidebar.header("Google Sheets 연결")
 
-items_file = st.sidebar.file_uploader("상품 데이터 (CSV)", type=["csv"])
-snapshots_file = st.sidebar.file_uploader("스냅샷 데이터 (CSV)", type=["csv"])
+# 서비스 계정 키: 업로드 또는 환경변수 경로
+creds_upload = st.sidebar.file_uploader(
+    "서비스 계정 JSON 키",
+    type=["json"],
+    help="Google Cloud 서비스 계정 키 파일을 업로드하세요. 시트를 해당 계정 이메일과 공유해야 합니다.",
+)
+creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+if creds_upload:
+    import json
+    creds_dict = json.load(creds_upload)
+    gs_client = get_gsheet_client(creds_dict)
+elif creds_path and os.path.isfile(creds_path):
+    with open(creds_path, "r", encoding="utf-8") as f:
+        import json
+        creds_dict = json.load(f)
+    gs_client = get_gsheet_client(creds_dict)
+else:
+    gs_client = None
 
-if items_file is None:
-    st.info("상품 CSV 파일을 업로드하세요.")
+sheet_url = st.sidebar.text_input(
+    "Google 시트 URL",
+    placeholder="https://docs.google.com/spreadsheets/d/xxxxx/edit",
+)
+items_sheet_name = st.sidebar.text_input(
+    "상품 시트 이름 (비우면 첫 시트)",
+    placeholder="Sheet1 또는 상품데이터",
+)
+snapshots_sheet_name = st.sidebar.text_input(
+    "스냅샷 시트 이름 (선택, 비우면 스냅샷 미사용)",
+    placeholder="스냅샷",
+)
+
+if not gs_client:
+    st.info("왼쪽 사이드바에서 **서비스 계정 JSON 키**를 업로드한 뒤, **Google 시트 URL**을 입력하세요.")
     st.stop()
 
-items_df = pd.read_csv(items_file)
+if not sheet_url:
+    st.info("Google 시트 URL을 입력하세요.")
+    st.stop()
+
+spreadsheet_id = spreadsheet_id_from_url(sheet_url)
+items_df = load_sheet_as_dataframe(
+    gs_client,
+    spreadsheet_id,
+    sheet_name=items_sheet_name if items_sheet_name.strip() else None,
+)
+if items_df is None:
+    st.stop()
+if len(items_df) == 0:
+    st.warning("시트에 데이터가 없습니다.")
+    st.stop()
+
+# 시트에서 읽은 값은 문자열이므로 숫자 컬럼 변환
+numeric_cols = [
+    "inboundQty", "outboundQty", "stockQty", "salesQty",
+    "isShot", "isRegistered", "isOnSale"
+]
+for col in numeric_cols:
+    if col in items_df.columns:
+        items_df[col] = pd.to_numeric(items_df[col], errors="coerce").fillna(0).astype(int)
 
 required_columns = [
     "brand","yearSeason","styleCode","productName",
@@ -119,10 +206,18 @@ for i, flow in enumerate(flow_types):
     cols[i].metric(flow, count)
 
 # ----------------------------
-# 스냅샷 증감 표시
+# 스냅샷 증감 표시 (Google 시트에 스냅샷 시트가 있는 경우)
 # ----------------------------
-if snapshots_file:
-    snapshots_df = pd.read_csv(snapshots_file)
+snapshots_df = None
+if snapshots_sheet_name and snapshots_sheet_name.strip():
+    snapshots_df = load_sheet_as_dataframe(
+        gs_client, spreadsheet_id, sheet_name=snapshots_sheet_name.strip()
+    )
+if snapshots_df is not None and len(snapshots_df) >= 2:
+    snap_cols = ["inboundDone", "outboundDone", "shotDone", "registeredDone", "onSaleDone"]
+    for c in snap_cols:
+        if c in snapshots_df.columns:
+            snapshots_df[c] = pd.to_numeric(snapshots_df[c], errors="coerce").fillna(0).astype(int)
     deltas = compute_flow_deltas(snapshots_df)
     if deltas:
         st.subheader("전주 대비 증감")
