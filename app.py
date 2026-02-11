@@ -97,11 +97,13 @@ def get_spreadsheet_ids_from_secrets():
             pass
     return ids
 
-# 서비스 계정: Secrets에서만 로드 (업로드/URL 입력 없음)
+# 서비스 계정: Secrets에서만 로드 (gcp_service_account 또는 google_service_account)
 creds_dict = None
 try:
     if "gcp_service_account" in st.secrets:
         creds_dict = dict(st.secrets["gcp_service_account"])
+    elif "google_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["google_service_account"])
 except Exception:
     pass
 gs_client = get_gsheet_client(creds_dict) if creds_dict else None
@@ -129,7 +131,7 @@ snapshots_sheet_name = st.sidebar.text_input(
 )
 
 if not gs_client:
-    st.info("Streamlit Secrets에 **gcp_service_account**를 설정해 주세요.")
+    st.info("Streamlit Secrets에 **gcp_service_account** 또는 **google_service_account**를 설정해 주세요.")
     st.stop()
 items_df = load_sheet_as_dataframe(
     gs_client,
