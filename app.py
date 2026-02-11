@@ -301,3 +301,40 @@ else:
         st.success("✅ SP_SPREADSHEET_ID 로딩 성공")
         st.write("값:", sp_id)
         st.write("길이:", len(sp_id))
+
+
+
+
+st.subheader("🔍 SP 시트 첫 행 확인")
+
+# 1. secrets에서 ID 가져오기
+sp_id = st.secrets.get("SP_SPREADSHEET_ID")
+
+if not sp_id:
+    st.error("SP_SPREADSHEET_ID 값을 가져오지 못함")
+else:
+    st.write("SP_SPREADSHEET_ID:", sp_id)
+
+    # 2. Google Sheets 클라이언트 생성
+    creds_dict = st.secrets.get("google_service_account")
+    client = get_gsheet_client(creds_dict)
+
+    if client is None:
+        st.error("Google Sheets 클라이언트 생성 실패")
+    else:
+        # 3. 시트 열기
+        spreadsheet = client.open_by_key(sp_id)
+        worksheet = spreadsheet.sheet1
+
+        # 4. 전체 값 가져오기
+        rows = worksheet.get_all_values()
+
+        if not rows:
+            st.error("시트에 데이터가 없음")
+        else:
+            first_row = rows[0]  # 첫 행 (헤더일 가능성 높음)
+
+            st.success("첫 행 로딩 성공")
+            st.write("첫 행 내용:")
+            st.write(first_row)
+
