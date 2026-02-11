@@ -1,31 +1,48 @@
 import streamlit as st
-import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
 
-# Google Sheets 클라이언트 생성 이후에만 실행
+# 1️⃣ Secrets에서 credentials 읽기
+creds_dict = st.secrets.get("google_service_account")
 
-if gs_client is None:
-    st.error("❌ gs_client 생성 실패 (Secrets 또는 서비스계정 확인)")
-else:
-    st.subheader("🔍 SP 시트 로딩 확인")
+# 2️⃣ gs_client 먼저 None으로 초기화
+gs_client = None
 
-    PHOTO_SPREADSHEET_ID = st.secrets.get("SP_SPREADSHEET_ID", "")
-    st.write("SP_SPREADSHEET_ID 값:", PHOTO_SPREADSHEET_ID)
+if creds_dict:
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
 
-    if not PHOTO_SPREADSHEET_ID:
-        st.error("❌ SP_SPREADSHEET_ID가 비어있음")
-    else:
-        photo_df = load_sheet_as_dataframe(
-            gs_client,
-            PHOTO_SPREADSHEET_ID,
-            sheet_name=None,
-            header_row=0
+        credentials = Credentials.from_service_account_info(
+            creds_dict,
+            scopes=scopes
         )
 
-        if photo_df is None:
-            st.error("❌ 시트 로딩 실패 (권한 문제 가능)")
-        elif len(photo_df) == 0:
-            st.warning("⚠️ 시트는 열렸지만 데이터 없음 (header_row 확인)")
-        else:
-            st.success(f"✅ 시트 로딩 성공 (행 개수: {len(photo_df)})")
-            st.write("컬럼 목록:", photo_df.columns.tolist())
-            st.dataframe(photo_df.head())
+        gs_client = gspread.authorize(credentials)
+        st.success("✅ Google Sheets 연결 성공")
+
+    except Exception as e:
+        st.error(f"❌ 인증 실패: {e}")
+
+else:
+    st.error("❌ google_service_account secrets 없음")
+
+# 3️⃣ 여기서부터 사용
+if gs_client is not None:
+    try:
+        PHOTO_SPREADSHEET_ID = "여기에_SPREADSHEET_ID"
+
+        spreadsheet = gs_client.open_by_key(PHOTO_SPREADSHEET_ID)
+        worksheet = spreadsheet.worksheet("SP")  # 시트 이름 정확히 입력
+
+        data = worksheet.get_all_values()
+
+        st.write("🔍 SP 시트 로딩 확인")
+        st.write("행 개수:", len(data))
+        st.write("상위 5행:")
+        st.write(data[:5])
+
+    except Exception as e:
+        st.error(f"❌ 시트 로딩 실패: {e}")
