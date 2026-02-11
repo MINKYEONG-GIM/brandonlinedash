@@ -254,7 +254,6 @@ required_columns = [
 missing = [col for col in required_columns if col not in items_df.columns]
 if missing:
     items_df = fill_missing_required_columns(items_df, required_columns)
-    st.warning(f"일부 컬럼이 없어 기본값으로 채웠습니다: {missing}. (브랜드/연도·시즌 등은 시트 컬럼 매핑을 확인하세요.)")
 
 # ----------------------------
 # verdict 생성
