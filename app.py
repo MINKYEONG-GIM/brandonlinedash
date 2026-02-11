@@ -4,9 +4,9 @@ from io import BytesIO
 
 st.set_page_config(page_title="브랜드 상품 흐름 대시보드", layout="wide")
 
-# ---------------------------
-# 상태 판정 로직 (getVerdict 대체)
-# ---------------------------
+# ----------------------------
+# 상태 판정 로직
+# ----------------------------
 def get_verdict(inbound, outbound, is_shot, is_registered, is_on_sale):
     if inbound > 0 and outbound == 0:
         return "입고"
@@ -20,9 +20,9 @@ def get_verdict(inbound, outbound, is_shot, is_registered, is_on_sale):
         return "판매개시"
     return "대기"
 
-# ---------------------------
+# ----------------------------
 # 스냅샷 증감 계산
-# ---------------------------
+# ----------------------------
 def compute_flow_deltas(df):
     if len(df) < 2:
         return None
@@ -36,28 +36,40 @@ def compute_flow_deltas(df):
         "판매개시": this_week["onSaleDone"] - last_week["onSaleDone"],
     }
 
-# ---------------------------
+# ----------------------------
 # 제목
-# ---------------------------
+# ----------------------------
 st.title("브랜드 상품 흐름 대시보드")
 
-# ---------------------------
-# 파일 업로드
-# ---------------------------
+# ----------------------------
+# 사이드바 데이터 업로드
+# ----------------------------
 st.sidebar.header("데이터 업로드")
 
-items_file = st.sidebar.file_uploader("상품 데이터 업로드 (CSV)", type=["csv"])
-snapshots_file = st.sidebar.file_uploader("스냅샷 데이터 업로드 (CSV)", type=["csv"])
+items_file = st.sidebar.file_uploader("상품 데이터 (CSV)", type=["csv"])
+snapshots_file = st.sidebar.file_uploader("스냅샷 데이터 (CSV)", type=["csv"])
 
 if items_file is None:
-    st.info("상품 데이터 CSV를 업로드하세요.")
+    st.info("상품 CSV 파일을 업로드하세요.")
     st.stop()
 
 items_df = pd.read_csv(items_file)
 
-# ---------------------------
+required_columns = [
+    "brand","yearSeason","styleCode","productName",
+    "colorCode","colorName","sizeCode",
+    "inboundQty","outboundQty","stockQty","salesQty",
+    "isShot","isRegistered","isOnSale"
+]
+
+missing = [col for col in required_columns if col not in items_df.columns]
+if missing:
+    st.error(f"필수 컬럼 누락: {missing}")
+    st.stop()
+
+# ----------------------------
 # verdict 생성
-# ---------------------------
+# ----------------------------
 items_df["verdict"] = items_df.apply(
     lambda r: get_verdict(
         r["inboundQty"],
@@ -69,17 +81,16 @@ items_df["verdict"] = items_df.apply(
     axis=1,
 )
 
-# ---------------------------
+# ----------------------------
 # 필터 영역
-# ---------------------------
-brands = items_df["brand"].unique()
-year_seasons = items_df["yearSeason"].unique()
-
+# ----------------------------
 col1, col2 = st.columns(2)
+
 with col1:
-    brand = st.selectbox("브랜드", brands)
+    brand = st.selectbox("브랜드", sorted(items_df["brand"].unique()))
+
 with col2:
-    year_season = st.selectbox("연도·시즌", year_seasons)
+    year_season = st.selectbox("연도·시즌", sorted(items_df["yearSeason"].unique()))
 
 filtered_df = items_df[
     (items_df["brand"] == brand)
@@ -90,33 +101,26 @@ search = st.text_input("스타일코드 / 판정 검색")
 
 if search:
     filtered_df = filtered_df[
-        filtered_df["styleCode"].str.contains(search, case=False)
-        | filtered_df["verdict"].str.contains(search, case=False)
+        filtered_df["styleCode"].str.contains(search, case=False, na=False)
+        | filtered_df["verdict"].str.contains(search, case=False, na=False)
     ]
 
-# ---------------------------
-# 흐름 선택
-# ---------------------------
-flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
-selected_flow = st.radio("흐름 선택", flow_types, horizontal=True)
-
-flow_df = filtered_df[filtered_df["verdict"] == selected_flow]
-
-# ---------------------------
+# ----------------------------
 # 흐름 집계 카드
-# ---------------------------
+# ----------------------------
 st.subheader("흐름 집계")
 
+flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
 flow_counts = filtered_df["verdict"].value_counts()
 
 cols = st.columns(len(flow_types))
 for i, flow in enumerate(flow_types):
-    count = flow_counts.get(flow, 0)
+    count = int(flow_counts.get(flow, 0))
     cols[i].metric(flow, count)
 
-# ---------------------------
+# ----------------------------
 # 스냅샷 증감 표시
-# ---------------------------
+# ----------------------------
 if snapshots_file:
     snapshots_df = pd.read_csv(snapshots_file)
     deltas = compute_flow_deltas(snapshots_df)
@@ -124,18 +128,24 @@ if snapshots_file:
         st.subheader("전주 대비 증감")
         cols = st.columns(len(flow_types))
         for i, flow in enumerate(flow_types):
-            cols[i].metric(flow, deltas[flow])
+            cols[i].metric(flow, deltas.get(flow, 0))
 
-# ---------------------------
+# ----------------------------
+# 흐름 선택
+# ----------------------------
+selected_flow = st.radio("상세 보기 흐름 선택", flow_types, horizontal=True)
+
+flow_df = filtered_df[filtered_df["verdict"] == selected_flow]
+
+# ----------------------------
 # 상세 테이블
-# ---------------------------
+# ----------------------------
 st.subheader(f"상세 현황 · {selected_flow}")
-
 st.dataframe(flow_df, use_container_width=True)
 
-# ---------------------------
+# ----------------------------
 # 엑셀 다운로드
-# ---------------------------
+# ----------------------------
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
