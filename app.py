@@ -317,7 +317,8 @@ if search:
         | filtered_df["verdict"].str.contains(search, case=False, na=False)
     ]
 
-total_n = len(filtered_df)
+# 발주 스타일 수(고유 styleCode), 입고/출고 등은 스타일 수로 집계
+total_n = filtered_df["styleCode"].nunique()
 if total_n == 0:
     st.info("선택한 조건에 맞는 데이터가 없습니다.")
     st.stop()
@@ -336,10 +337,11 @@ if snapshots_sheet_name and snapshots_sheet_name.strip():
         deltas = compute_flow_deltas(snapshots_df)
 
 # ----------------------------
-# 흐름 집계 카드 (클릭하면 해당 흐름 상세 현황 표시)
+# 흐름 집계 카드 (스타일 수 기준, 클릭하면 해당 흐름 상세 현황 표시)
 # ----------------------------
 flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
-flow_counts = filtered_df["verdict"].value_counts()
+# verdict별 고유 스타일 수 (행 수가 아닌 스타일 수)
+flow_counts = filtered_df.groupby("verdict")["styleCode"].nunique()
 
 if "selected_flow" not in st.session_state:
     st.session_state.selected_flow = flow_types[0]
