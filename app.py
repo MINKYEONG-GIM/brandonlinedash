@@ -165,6 +165,7 @@ def compute_flow_deltas(df):
 # 제목
 # ----------------------------
 st.title("브랜드 상품 흐름 대시보드")
+st.caption("입고 · 출고 · 촬영 · 등록 · 판매개시 현황")
 
 # ----------------------------
 # Google Sheets 연결 (Secrets만 사용, UI 없음)
@@ -269,89 +270,162 @@ items_df["verdict"] = items_df.apply(
     axis=1,
 )
 
+# 연도 컬럼 (필터용, yearSeason 앞 4자리)
+items_df["_year"] = items_df["yearSeason"].astype(str).str[:4]
+
 # ----------------------------
 # 필터 영역
 # ----------------------------
-col1, col2 = st.columns(2)
-
+col1, col2, col3 = st.columns(3)
 with col1:
     brand = st.selectbox("브랜드", sorted(items_df["brand"].unique()))
-
 with col2:
-    year_season = st.selectbox("연도·시즌", sorted(items_df["yearSeason"].unique()))
+    years = sorted(items_df["_year"].dropna().unique())
+    year = st.selectbox("연도", years, key="year") if years else None
+with col3:
+    season_options = sorted(
+        items_df.loc[items_df["_year"] == year, "yearSeason"].unique()
+    ) if year is not None else []
+    year_season = st.selectbox("시즌", season_options, key="season") if season_options else None
 
-filtered_df = items_df[
-    (items_df["brand"] == brand)
-    & (items_df["yearSeason"] == year_season)
-]
+if year is not None and year_season is not None:
+    filtered_df = items_df[
+        (items_df["brand"] == brand)
+        & (items_df["_year"] == year)
+        & (items_df["yearSeason"] == year_season)
+    ].copy()
+else:
+    filtered_df = items_df[(items_df["brand"] == brand)].copy()
+    if year is not None:
+        filtered_df = filtered_df[filtered_df["_year"] == year]
+    if year_season is not None and len(season_options):
+        filtered_df = filtered_df[filtered_df["yearSeason"] == year_season]
 
-search = st.text_input("스타일코드 / 판정 검색")
-
+search = st.text_input(
+    "스타일코드 / 상태 검색",
+    placeholder="스타일코드 또는 판정 상태 검색",
+)
 if search:
     filtered_df = filtered_df[
-        filtered_df["styleCode"].str.contains(search, case=False, na=False)
+        filtered_df["styleCode"].astype(str).str.contains(search, case=False, na=False)
         | filtered_df["verdict"].str.contains(search, case=False, na=False)
     ]
 
-# ----------------------------
-# 흐름 집계 카드
-# ----------------------------
-st.subheader("흐름 집계")
+total_n = len(filtered_df)
+if total_n == 0:
+    st.info("선택한 조건에 맞는 데이터가 없습니다.")
+    st.stop()
 
-flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
-flow_counts = filtered_df["verdict"].value_counts()
-
-cols = st.columns(len(flow_types))
-for i, flow in enumerate(flow_types):
-    count = int(flow_counts.get(flow, 0))
-    cols[i].metric(flow, count)
-
-# ----------------------------
-# 스냅샷 증감 표시 (Google 시트에 스냅샷 시트가 있는 경우)
-# ----------------------------
-snapshots_df = None
+# 스냅샷 증감 (카드에 함께 표시용)
+deltas = None
 if snapshots_sheet_name and snapshots_sheet_name.strip():
     snapshots_df = load_sheet_as_dataframe(
         gs_client, spreadsheet_id, sheet_name=snapshots_sheet_name.strip()
     )
-if snapshots_df is not None and len(snapshots_df) >= 2:
-    snap_cols = ["inboundDone", "outboundDone", "shotDone", "registeredDone", "onSaleDone"]
-    for c in snap_cols:
-        if c in snapshots_df.columns:
-            snapshots_df[c] = pd.to_numeric(snapshots_df[c], errors="coerce").fillna(0).astype(int)
-    deltas = compute_flow_deltas(snapshots_df)
-    if deltas:
-        st.subheader("전주 대비 증감")
-        cols = st.columns(len(flow_types))
-        for i, flow in enumerate(flow_types):
-            cols[i].metric(flow, deltas.get(flow, 0))
+    if snapshots_df is not None and len(snapshots_df) >= 2:
+        snap_cols = ["inboundDone", "outboundDone", "shotDone", "registeredDone", "onSaleDone"]
+        for c in snap_cols:
+            if c in snapshots_df.columns:
+                snapshots_df[c] = pd.to_numeric(snapshots_df[c], errors="coerce").fillna(0).astype(int)
+        deltas = compute_flow_deltas(snapshots_df)
 
 # ----------------------------
-# 흐름 선택
+# 흐름 집계 카드 (N/전체, 증감)
 # ----------------------------
-selected_flow = st.radio("상세 보기 흐름 선택", flow_types, horizontal=True)
+flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
+flow_counts = filtered_df["verdict"].value_counts()
 
-flow_df = filtered_df[filtered_df["verdict"] == selected_flow]
+selected_flow = st.radio(
+    "상세 보기 흐름 선택",
+    flow_types,
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+# 카드 + 스타일/단품 토글 한 줄에
+card_cols = st.columns(len(flow_types) + 1)
+for i, flow in enumerate(flow_types):
+    count = int(flow_counts.get(flow, 0))
+    delta_val = deltas.get(flow, 0) if deltas else None
+    with card_cols[i]:
+        st.metric(
+            flow,
+            f"{count}/{total_n}",
+            delta=f"▲{delta_val}" if (delta_val is not None and delta_val > 0) else (f"{delta_val}" if delta_val is not None else None),
+        )
+with card_cols[-1]:
+    view_mode = st.radio(
+        "보기 단위",
+        ["스타일", "단품"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="view_mode",
+    )
+
+flow_df = filtered_df[filtered_df["verdict"] == selected_flow].copy()
+
+# 스타일 단위: styleCode 기준 집계 (수량 합산, 촬영/등록/판매개시는 하나라도 1이면 1)
+if view_mode == "스타일" and len(flow_df) > 0:
+    group_cols = ["brand", "yearSeason", "styleCode"]
+    agg_dict = {
+        "inboundQty": "sum",
+        "outboundQty": "sum",
+        "stockQty": "sum",
+        "salesQty": "sum",
+        "isShot": "max",
+        "isRegistered": "max",
+        "isOnSale": "max",
+    }
+    if "productName" in flow_df.columns:
+        agg_dict["productName"] = "first"
+    if "colorName" in flow_df.columns:
+        agg_dict["colorName"] = lambda s: " / ".join(s.dropna().astype(str).unique()[:5])
+    flow_df = flow_df.groupby(group_cols, dropna=False).agg(agg_dict).reset_index()
+
+flow_df["verdict"] = selected_flow
+
+# 표시용 컬럼: 촬영 O/X, 등록 O/X, 판매 상태
+flow_df["_촬영"] = flow_df["isShot"].map(lambda x: "O" if x == 1 else "X")
+flow_df["_등록"] = flow_df["isRegistered"].map(lambda x: "O" if x == 1 else "X")
+flow_df["_판매"] = flow_df.apply(
+    lambda r: "판매개시" if r["isOnSale"] == 1 else ("출고전" if r["outboundQty"] == 0 else "출고"),
+    axis=1,
+)
 
 # ----------------------------
-# 상세 테이블
+# 상세 테이블 (NO, 스타일코드, 상품명, 컬러, 입고/출고/재고/판매량, 촬영, 등록, 판매)
 # ----------------------------
 st.subheader(f"상세 현황 · {selected_flow}")
-st.dataframe(flow_df, use_container_width=True)
 
-# ----------------------------
-# 엑셀 다운로드
-# ----------------------------
+display_df = flow_df.copy()
+display_df.insert(0, "NO", range(1, len(display_df) + 1))
+show_cols = ["NO", "styleCode", "productName", "colorName", "inboundQty", "outboundQty", "stockQty", "salesQty", "_촬영", "_등록", "_판매"]
+show_cols = [c for c in show_cols if c in display_df.columns]
+display_df = display_df[show_cols]
+display_df = display_df.rename(columns={
+    "styleCode": "스타일코드",
+    "productName": "상품명",
+    "colorName": "컬러",
+    "inboundQty": "입고량",
+    "outboundQty": "출고량",
+    "stockQty": "재고량",
+    "salesQty": "판매량",
+    "_촬영": "촬영",
+    "_등록": "등록",
+    "_판매": "판매",
+})
+
+st.dataframe(display_df, use_container_width=True, hide_index=True)
+
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         df.to_excel(writer, index=False, sheet_name="상세현황")
     return output.getvalue()
 
-excel_data = to_excel(flow_df)
-
+excel_data = to_excel(display_df)
 st.download_button(
-    label="엑셀 다운로드",
+    label="Download",
     data=excel_data,
     file_name=f"상세현황_{selected_flow}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
