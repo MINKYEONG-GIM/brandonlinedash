@@ -291,7 +291,6 @@ with col4:
     search = st.text_input(
         "스타일코드 / 상태 검색",
         placeholder="스타일코드 또는 판정 상태 검색",
-        label_visibility="collapsed",
     )
 
 if year is not None and year_season is not None:
