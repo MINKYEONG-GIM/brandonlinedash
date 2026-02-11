@@ -286,25 +286,30 @@ with col3:
     season_options = sorted(
         items_df.loc[items_df["_year"] == year, "yearSeason"].unique()
     ) if year is not None else []
-    year_season = st.selectbox("시즌", season_options, key="season") if season_options else None
+    year_seasons = st.multiselect(
+        "시즌",
+        season_options,
+        default=season_options if season_options else [],
+        key="season",
+    )
 with col4:
     search = st.text_input(
-        "스타일코드 / 상태 검색",
+        "스타일코드 검색",
         placeholder="스타일코드 또는 판정 상태 검색",
     )
 
-if year is not None and year_season is not None:
+if year is not None and year_seasons:
     filtered_df = items_df[
         (items_df["brand"] == brand)
         & (items_df["_year"] == year)
-        & (items_df["yearSeason"] == year_season)
+        & (items_df["yearSeason"].isin(year_seasons))
     ].copy()
 else:
     filtered_df = items_df[(items_df["brand"] == brand)].copy()
     if year is not None:
         filtered_df = filtered_df[filtered_df["_year"] == year]
-    if year_season is not None and len(season_options):
-        filtered_df = filtered_df[filtered_df["yearSeason"] == year_season]
+    if year_seasons:
+        filtered_df = filtered_df[filtered_df["yearSeason"].isin(year_seasons)]
 
 if search:
     filtered_df = filtered_df[
