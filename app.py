@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-import re
-import os
 
 st.set_page_config(page_title="브랜드 상품 흐름 대시보드", layout="wide")
 
@@ -22,10 +20,6 @@ def get_gsheet_client(credentials_dict):
         credentials_dict, scopes=scope
     )
     return gspread.authorize(creds)
-
-def spreadsheet_id_from_url(url):
-    m = re.search(r"/d/([a-zA-Z0-9_-]+)", url)
-    return m.group(1) if m else url.strip()
 
 def load_sheet_as_dataframe(client, spreadsheet_id, sheet_name=None):
     try:
@@ -77,33 +71,54 @@ def compute_flow_deltas(df):
 st.title("브랜드 상품 흐름 대시보드")
 
 # ----------------------------
-# 사이드바 — Google Sheets 연결
+# 사이드바 — Google Sheets 연결 (Secrets 사용)
 # ----------------------------
 st.sidebar.header("Google Sheets 연결")
 
-# 서비스 계정 키: 업로드 또는 환경변수 경로
-creds_upload = st.sidebar.file_uploader(
-    "서비스 계정 JSON 키",
-    type=["json"],
-    help="Google Cloud 서비스 계정 키 파일을 업로드하세요. 시트를 해당 계정 이메일과 공유해야 합니다.",
-)
-creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-if creds_upload:
-    import json
-    creds_dict = json.load(creds_upload)
-    gs_client = get_gsheet_client(creds_dict)
-elif creds_path and os.path.isfile(creds_path):
-    with open(creds_path, "r", encoding="utf-8") as f:
-        import json
-        creds_dict = json.load(f)
-    gs_client = get_gsheet_client(creds_dict)
-else:
-    gs_client = None
+# 스프레드시트 ID 매핑 (Streamlit Secrets 키 → 표시 이름)
+SPREADSHEET_OPTIONS = {
+    "BASE_SPREADSHEET_ID": "BASE",
+    "SP_SPREADSHEET_ID": "SP",
+    "MI_SPREADSHEET_ID": "MI",
+    "CV_SPREADSHEET_ID": "CV",
+    "WH_SPREADSHEET_ID": "WH",
+    "RM_SPREADSHEET_ID": "RM",
+    "EB_SPREADSHEET_ID": "EB",
+}
 
-sheet_url = st.sidebar.text_input(
-    "Google 시트 URL",
-    placeholder="https://docs.google.com/spreadsheets/d/xxxxx/edit",
+def get_spreadsheet_ids_from_secrets():
+    ids = {}
+    for secret_key, label in SPREADSHEET_OPTIONS.items():
+        try:
+            val = st.secrets.get(secret_key, "")
+            if val and str(val).strip():
+                ids[label] = str(val).strip()
+        except Exception:
+            pass
+    return ids
+
+# 서비스 계정: Secrets에서만 로드 (업로드/URL 입력 없음)
+creds_dict = None
+try:
+    if "gcp_service_account" in st.secrets:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+except Exception:
+    pass
+gs_client = get_gsheet_client(creds_dict) if creds_dict else None
+
+# 시트 선택: Secrets에서 ID 목록 로드
+spreadsheet_ids = get_spreadsheet_ids_from_secrets()
+if not spreadsheet_ids:
+    st.error("Secrets에 스프레드시트 ID가 없습니다. BASE_SPREADSHEET_ID 등을 설정하세요.")
+    st.stop()
+
+selected_label = st.sidebar.selectbox(
+    "사용할 시트",
+    options=list(spreadsheet_ids.keys()),
+    format_func=lambda x: f"{x} ({spreadsheet_ids[x][:8]}…)",
 )
+spreadsheet_id = spreadsheet_ids[selected_label]
+
 items_sheet_name = st.sidebar.text_input(
     "상품 시트 이름 (비우면 첫 시트)",
     placeholder="Sheet1 또는 상품데이터",
@@ -114,14 +129,8 @@ snapshots_sheet_name = st.sidebar.text_input(
 )
 
 if not gs_client:
-    st.info("왼쪽 사이드바에서 **서비스 계정 JSON 키**를 업로드한 뒤, **Google 시트 URL**을 입력하세요.")
+    st.info("Streamlit Secrets에 **gcp_service_account**를 설정해 주세요.")
     st.stop()
-
-if not sheet_url:
-    st.info("Google 시트 URL을 입력하세요.")
-    st.stop()
-
-spreadsheet_id = spreadsheet_id_from_url(sheet_url)
 items_df = load_sheet_as_dataframe(
     gs_client,
     spreadsheet_id,
