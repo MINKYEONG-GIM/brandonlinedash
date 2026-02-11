@@ -336,29 +336,28 @@ if snapshots_sheet_name and snapshots_sheet_name.strip():
         deltas = compute_flow_deltas(snapshots_df)
 
 # ----------------------------
-# 흐름 집계 카드 (N/전체, 증감)
+# 흐름 집계 카드 (클릭하면 해당 흐름 상세 현황 표시)
 # ----------------------------
 flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
 flow_counts = filtered_df["verdict"].value_counts()
 
-selected_flow = st.radio(
-    "상세 보기 흐름 선택",
-    flow_types,
-    horizontal=True,
-    label_visibility="collapsed",
-)
+if "selected_flow" not in st.session_state:
+    st.session_state.selected_flow = flow_types[0]
 
-# 카드 + 스타일/단품 토글 한 줄에
 card_cols = st.columns(len(flow_types) + 1)
 for i, flow in enumerate(flow_types):
     count = int(flow_counts.get(flow, 0))
     delta_val = deltas.get(flow, 0) if deltas else None
+    delta_str = f"▲{delta_val}" if (delta_val is not None and delta_val > 0) else (str(delta_val) if delta_val is not None else "")
     with card_cols[i]:
-        st.metric(
-            flow,
-            f"{count}/{total_n}",
-            delta=f"▲{delta_val}" if (delta_val is not None and delta_val > 0) else (f"{delta_val}" if delta_val is not None else None),
-        )
+        btn_label = f"{flow}\n{count}/{total_n}"
+        if delta_str:
+            btn_label += f"  {delta_str}"
+        if st.button(btn_label, key=f"flow_btn_{flow}", use_container_width=True):
+            st.session_state.selected_flow = flow
+        if st.session_state.selected_flow == flow:
+            st.caption("✓ 선택됨")
+
 with card_cols[-1]:
     view_mode = st.radio(
         "보기 단위",
@@ -367,6 +366,8 @@ with card_cols[-1]:
         label_visibility="collapsed",
         key="view_mode",
     )
+
+selected_flow = st.session_state.selected_flow
 
 flow_df = filtered_df[filtered_df["verdict"] == selected_flow].copy()
 
