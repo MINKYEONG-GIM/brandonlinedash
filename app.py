@@ -223,10 +223,23 @@ def get_verdict(inbound, outbound, is_shot, is_registered, is_on_sale):
 # 포토촬영일 기준 촬영 스타일 수 (2025-01-01 ~ 2029-12-31)
 # ----------------------------
 def _find_photo_date_column(df):
-    """포토촬영일 컬럼 후보: 이름에 포토촬영/촬영일 포함"""
+    """촬영 완료를 판정할 날짜 컬럼 후보를 찾습니다.
+
+    스파오 시트에서는 '리터칭완료일'처럼 촬영 이후 공정 날짜가 들어오는 경우가 있어,
+    해당 컬럼에 날짜가 있으면 촬영 완료(O)로 표시합니다.
+    """
     for c in df.columns:
         s = str(c).strip()
-        if "포토촬영" in s or "촬영일" in s or s in ("photoShotDate", "shotDate"):
+        s_lower = s.lower()
+        if (
+            "포토촬영" in s
+            or "촬영일" in s
+            or "리터칭완료" in s
+            or "리터칭 완료" in s
+            or "보정완료" in s
+            or "retouch" in s_lower
+            or s in ("photoShotDate", "shotDate", "retouchDoneDate", "retouch_date")
+        ):
             return c
     return None
 
@@ -241,16 +254,22 @@ def _parse_date_series(ser):
             out = out.fillna(pd.to_datetime(numeric[valid_num], unit="D", origin="1899-12-30"))
     return out
 
-def count_styles_with_photo_date_in_range(df, start="2025-01-01", end="2029-12-31"):
-    """포토촬영일이 start~end 사이인 행의 고유 styleCode 개수. 해당 컬럼 없거나 유효한 값 없으면 0."""
+def compute_shot_done_series(df):
+    """촬영 완료 여부(0/1) 시리즈를 생성.
+
+    우선순위:
+    - 촬영/리터칭/보정 관련 날짜 컬럼에 유효한 날짜가 있으면 1
+    - 없으면 isShot(0/1) 값으로 폴백
+    """
     date_col = _find_photo_date_column(df)
-    if date_col is None:
-        return 0
-    ser = _parse_date_series(df[date_col])
-    start_d = pd.Timestamp(start)
-    end_d = pd.Timestamp(end)
-    mask = ser.notna() & (ser >= start_d) & (ser <= end_d)
-    return df.loc[mask, "styleCode"].nunique()
+    if date_col is not None and date_col in df.columns:
+        ser = _parse_date_series(df[date_col])
+        return ser.notna().astype(int)
+
+    if "isShot" in df.columns:
+        return (pd.to_numeric(df["isShot"], errors="coerce").fillna(0).astype(int) == 1).astype(int)
+
+    return pd.Series([0] * len(df), index=df.index, dtype="int64")
 
 # ----------------------------
 # 스냅샷 증감 계산
@@ -379,13 +398,19 @@ if missing:
     items_df = fill_missing_required_columns(items_df, required_columns)
 
 # ----------------------------
+# 촬영 완료 여부 계산 (__shot_done)
+# - 리터칭완료일 등 날짜가 있으면 O로 표시
+# ----------------------------
+items_df["__shot_done"] = compute_shot_done_series(items_df)
+
+# ----------------------------
 # verdict 생성
 # ----------------------------
 items_df["verdict"] = items_df.apply(
     lambda r: get_verdict(
         r["inboundQty"],
         r["outboundQty"],
-        r["isShot"],
+        r["__shot_done"],
         r["isRegistered"],
         r["isOnSale"],
     ),
@@ -466,7 +491,7 @@ flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
 _flow_conditions = {
     "입고": (filtered_df["inboundQty"] > 0),
     "출고": (filtered_df["outboundQty"] > 0),
-    "촬영": (filtered_df["isShot"] == 1),  # 포토촬영일 없을 때 폴백
+    "촬영": (filtered_df["__shot_done"] == 1),
     "등록": (filtered_df["isRegistered"] == 1),
     "판매개시": (filtered_df["isOnSale"] == 1),
 }
@@ -474,9 +499,6 @@ flow_counts = pd.Series({
     flow: filtered_df.loc[cond]["styleCode"].nunique()
     for flow, cond in _flow_conditions.items()
 })
-# 촬영: 포토촬영일 2025-01-01~2029-12-31인 스타일 수. 해당 컬럼 없거나 0이면 isShot 기준으로 폴백
-_shot_by_date = count_styles_with_photo_date_in_range(filtered_df)
-flow_counts["촬영"] = _shot_by_date if _shot_by_date > 0 else filtered_df.loc[_flow_conditions["촬영"]]["styleCode"].nunique()
 
 if "selected_flow" not in st.session_state:
     st.session_state.selected_flow = flow_types[0]
@@ -506,14 +528,7 @@ with card_cols[-1]:
 
 selected_flow = st.session_state.selected_flow
 
-# 촬영: 포토촬영일 2025-01-01~2029-12-31인 행 (해당 컬럼 없으면 isShot==1)
-_shot_date_col = _find_photo_date_column(filtered_df)
-if selected_flow == "촬영" and _shot_date_col is not None:
-    _shot_ser = _parse_date_series(filtered_df[_shot_date_col])
-    _shot_mask = _shot_ser.notna() & (_shot_ser >= pd.Timestamp("2025-01-01")) & (_shot_ser <= pd.Timestamp("2029-12-31"))
-    flow_df = filtered_df.loc[_shot_mask].copy()
-else:
-    flow_df = filtered_df.loc[_flow_conditions[selected_flow]].copy()
+flow_df = filtered_df.loc[_flow_conditions[selected_flow]].copy()
 
 # 스타일 단위: styleCode 기준 집계 (수량 합산, 촬영/등록/판매개시는 하나라도 1이면 1)
 if view_mode == "스타일" and len(flow_df) > 0:
@@ -524,6 +539,7 @@ if view_mode == "스타일" and len(flow_df) > 0:
         "stockQty": "sum",
         "salesQty": "sum",
         "isShot": "max",
+        "__shot_done": "max",
         "isRegistered": "max",
         "isOnSale": "max",
     }
@@ -536,7 +552,7 @@ if view_mode == "스타일" and len(flow_df) > 0:
 flow_df["verdict"] = selected_flow
 
 # 표시용 컬럼: 촬영 O/X, 등록 O/X, 판매 상태
-flow_df["_촬영"] = flow_df["isShot"].map(lambda x: "O" if x == 1 else "X")
+flow_df["_촬영"] = flow_df["__shot_done"].map(lambda x: "O" if int(x) == 1 else "X")
 flow_df["_등록"] = flow_df["isRegistered"].map(lambda x: "O" if x == 1 else "X")
 flow_df["_판매"] = flow_df.apply(
     lambda r: "판매개시" if r["isOnSale"] == 1 else ("출고전" if r["outboundQty"] == 0 else "출고"),
