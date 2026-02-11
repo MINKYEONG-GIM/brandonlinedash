@@ -1,21 +1,17 @@
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
+import pandas as pd
 
 SPREADSHEET_ID = st.secrets.get("SP_SPREADSHEET_ID")
 
-creds_dict = st.secrets["google_service_account"]
 
-creds = Credentials.from_service_account_info(
-    creds_dict,
-    scopes=["https://www.googleapis.com/auth/spreadsheets"]
-)
 
-client = gspread.authorize(creds)
+worksheet = spreadsheet.get_worksheet(0)  # 첫 번째 탭
+data = worksheet.get_all_records()
 
-try:
-    spreadsheet = client.open_by_key(SPREADSHEET_ID)
-    st.success("시트 열기 성공")
-    st.write("시트 제목:", spreadsheet.title)
-except Exception as e:
-    st.error(f"시트 열기 실패: {e}")
+df = pd.DataFrame(data)
+
+st.write("행 개수:", len(df))
+st.write("컬럼 목록:", df.columns.tolist())
+st.dataframe(df.head())
