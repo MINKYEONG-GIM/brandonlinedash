@@ -146,6 +146,21 @@ def get_verdict(inbound, outbound, is_shot, is_registered, is_on_sale):
     return "대기"
 
 # ----------------------------
+# 포토촬영일 기준 촬영 스타일 수 (2025-01-01 ~ 2029-12-31)
+# ----------------------------
+def count_styles_with_photo_date_in_range(df, start="2025-01-01", end="2029-12-31"):
+    """포토촬영일이 start~end 사이인 행의 고유 styleCode 개수. 해당 컬럼 없으면 0."""
+    date_candidates = [c for c in df.columns if "포토촬영" in str(c) or c == "photoShotDate"]
+    if not date_candidates:
+        return 0
+    date_col = date_candidates[0]
+    ser = pd.to_datetime(df[date_col], errors="coerce")
+    start_d = pd.Timestamp(start)
+    end_d = pd.Timestamp(end)
+    mask = ser.notna() & (ser >= start_d) & (ser <= end_d)
+    return df.loc[mask, "styleCode"].nunique()
+
+# ----------------------------
 # 스냅샷 증감 계산
 # ----------------------------
 def compute_flow_deltas(df):
@@ -343,7 +358,7 @@ flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
 _flow_conditions = {
     "입고": (filtered_df["inboundQty"] > 0),
     "출고": (filtered_df["outboundQty"] > 0),
-    "촬영": (filtered_df["isShot"] == 1),
+    "촬영": (filtered_df["isShot"] == 1),  # 포토촬영일 없을 때 폴백
     "등록": (filtered_df["isRegistered"] == 1),
     "판매개시": (filtered_df["isOnSale"] == 1),
 }
@@ -351,6 +366,8 @@ flow_counts = pd.Series({
     flow: filtered_df.loc[cond]["styleCode"].nunique()
     for flow, cond in _flow_conditions.items()
 })
+# 촬영: 포토촬영일이 2025-01-01~2029-12-31인 스타일 수로 분자 사용
+flow_counts["촬영"] = count_styles_with_photo_date_in_range(filtered_df)
 
 if "selected_flow" not in st.session_state:
     st.session_state.selected_flow = flow_types[0]
@@ -380,7 +397,14 @@ with card_cols[-1]:
 
 selected_flow = st.session_state.selected_flow
 
-flow_df = filtered_df.loc[_flow_conditions[selected_flow]].copy()
+# 촬영: 포토촬영일 2025-01-01~2029-12-31인 행 (해당 컬럼 없으면 isShot==1)
+_shot_date_cols = [c for c in filtered_df.columns if "포토촬영" in str(c) or c == "photoShotDate"]
+if selected_flow == "촬영" and _shot_date_cols:
+    _shot_ser = pd.to_datetime(filtered_df[_shot_date_cols[0]], errors="coerce")
+    _shot_mask = _shot_ser.notna() & (_shot_ser >= pd.Timestamp("2025-01-01")) & (_shot_ser <= pd.Timestamp("2029-12-31"))
+    flow_df = filtered_df.loc[_shot_mask].copy()
+else:
+    flow_df = filtered_df.loc[_flow_conditions[selected_flow]].copy()
 
 # 스타일 단위: styleCode 기준 집계 (수량 합산, 촬영/등록/판매개시는 하나라도 1이면 1)
 if view_mode == "스타일" and len(flow_df) > 0:
