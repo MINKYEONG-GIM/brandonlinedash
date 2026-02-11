@@ -1,25 +1,31 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="브랜드 상품 흐름 대시보드", layout="wide")
+# Google Sheets 클라이언트 생성 이후에만 실행
 
-gs_client = get_gsheet_client(creds_dict) if creds_dict else None
+if gs_client is None:
+    st.error("❌ gs_client 생성 실패 (Secrets 또는 서비스계정 확인)")
+else:
+    st.subheader("🔍 SP 시트 로딩 확인")
 
-# 🔽 여기 아래에 넣어야 함
-st.subheader("🔍 SP 시트 로딩 확인")
+    PHOTO_SPREADSHEET_ID = st.secrets.get("SP_SPREADSHEET_ID", "")
+    st.write("SP_SPREADSHEET_ID 값:", PHOTO_SPREADSHEET_ID)
 
-PHOTO_SPREADSHEET_ID = st.secrets.get("SP_SPREADSHEET_ID", "")
-st.write("SP_SPREADSHEET_ID 값:", PHOTO_SPREADSHEET_ID)
+    if not PHOTO_SPREADSHEET_ID:
+        st.error("❌ SP_SPREADSHEET_ID가 비어있음")
+    else:
+        photo_df = load_sheet_as_dataframe(
+            gs_client,
+            PHOTO_SPREADSHEET_ID,
+            sheet_name=None,
+            header_row=0
+        )
 
-if PHOTO_SPREADSHEET_ID and gs_client:
-    photo_df = load_sheet_as_dataframe(
-        gs_client,
-        PHOTO_SPREADSHEET_ID,
-        sheet_name=None,
-        header_row=0
-    )
-
-    st.write("행 개수:", len(photo_df) if photo_df is not None else "None")
-    if photo_df is not None:
-        st.write("컬럼 목록:", photo_df.columns.tolist())
-        st.dataframe(photo_df.head())
+        if photo_df is None:
+            st.error("❌ 시트 로딩 실패 (권한 문제 가능)")
+        elif len(photo_df) == 0:
+            st.warning("⚠️ 시트는 열렸지만 데이터 없음 (header_row 확인)")
+        else:
+            st.success(f"✅ 시트 로딩 성공 (행 개수: {len(photo_df)})")
+            st.write("컬럼 목록:", photo_df.columns.tolist())
+            st.dataframe(photo_df.head())
