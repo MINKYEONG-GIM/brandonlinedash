@@ -148,11 +148,8 @@ def compute_flow_deltas(df):
 st.title("브랜드 상품 흐름 대시보드")
 
 # ----------------------------
-# 사이드바 — Google Sheets 연결 (Secrets 사용)
+# Google Sheets 연결 (Secrets만 사용, UI 없음)
 # ----------------------------
-st.sidebar.header("Google Sheets 연결")
-
-# 스프레드시트 ID 매핑 (Streamlit Secrets 키 → 표시 이름)
 SPREADSHEET_OPTIONS = {
     "BASE_SPREADSHEET_ID": "BASE",
     "SP_SPREADSHEET_ID": "SP",
@@ -174,7 +171,6 @@ def get_spreadsheet_ids_from_secrets():
             pass
     return ids
 
-# 서비스 계정: Secrets에서만 로드 (gcp_service_account 또는 google_service_account)
 creds_dict = None
 try:
     if "gcp_service_account" in st.secrets:
@@ -185,33 +181,17 @@ except Exception:
     pass
 gs_client = get_gsheet_client(creds_dict) if creds_dict else None
 
-# 시트 선택: Secrets에서 ID 목록 로드
 spreadsheet_ids = get_spreadsheet_ids_from_secrets()
 if not spreadsheet_ids:
     st.error("Secrets에 스프레드시트 ID가 없습니다. BASE_SPREADSHEET_ID 등을 설정하세요.")
     st.stop()
 
-selected_label = st.sidebar.selectbox(
-    "사용할 시트",
-    options=list(spreadsheet_ids.keys()),
-    format_func=lambda x: f"{x} ({spreadsheet_ids[x][:8]}…)",
-)
+# 기본값: Secrets 첫 번째 시트, 첫 시트 탭, 헤더 1행
+selected_label = list(spreadsheet_ids.keys())[0]
 spreadsheet_id = spreadsheet_ids[selected_label]
-
-items_sheet_name = st.sidebar.text_input(
-    "상품 시트 이름 (비우면 첫 시트)",
-    placeholder="Sheet1 또는 상품데이터",
-)
-header_row = st.sidebar.number_input(
-    "헤더 행 번호",
-    min_value=1,
-    value=1,
-    help="헤더가 몇 번째 행인지 (1=첫 줄, 2=둘째 줄 …)",
-)
-snapshots_sheet_name = st.sidebar.text_input(
-    "스냅샷 시트 이름 (선택, 비우면 스냅샷 미사용)",
-    placeholder="스냅샷",
-)
+items_sheet_name = ""
+header_row = 1
+snapshots_sheet_name = ""
 
 if not gs_client:
     st.info("Streamlit Secrets에 **gcp_service_account** 또는 **google_service_account**를 설정해 주세요.")
