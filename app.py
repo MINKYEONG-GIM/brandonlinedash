@@ -37,6 +37,26 @@ def load_sheet_as_dataframe(client, spreadsheet_id, sheet_name=None, header_row=
         st.error(f"시트 읽기 오류: {e}")
         return None
 
+# 스타일코드 앞 2자리 → 브랜드 한글명
+BRAND_CODE_MAP = {
+    "sp": "스파오",
+    "rm": "로엠",
+    "mi": "미쏘",
+    "wh": "후아유",
+    "nb": "뉴발란스",
+    "eb": "에블린",
+    "hp": "슈펜",
+    "cv": "클라비스",
+    "nk": "뉴발란스키즈",
+}
+
+def brand_from_style_code(style_code):
+    """스타일코드 앞 2자리로 브랜드명 반환 (소문자로 매핑)"""
+    if pd.isna(style_code) or not str(style_code).strip():
+        return ""
+    code = str(style_code).strip()[:2].lower()
+    return BRAND_CODE_MAP.get(code, code.upper())
+
 # 시트 컬럼명 → 앱 필수 컬럼명 매핑 (한글/다른 표기 지원)
 COLUMN_ALIASES = {
     "브랜드": "brand",
@@ -44,7 +64,6 @@ COLUMN_ALIASES = {
     "연도·시즌": "yearSeason",
     "연도 시즌": "yearSeason",
     "시즌(Now)": "yearSeason",
-    "채널(Now)": "brand",
     "스타일코드": "styleCode",
     "스타일 코드": "styleCode",
     "스타일코드(Now)": "styleCode",
@@ -210,6 +229,10 @@ if len(items_df) == 0:
 
 # 한글/다른 컬럼명을 필수 컬럼명으로 매핑
 items_df = apply_column_aliases(items_df)
+
+# 브랜드: 스타일코드(Now) 앞 2자리 → 매핑 테이블 한글명
+if "styleCode" in items_df.columns:
+    items_df["brand"] = items_df["styleCode"].apply(brand_from_style_code)
 
 # 시트에서 읽은 값은 문자열이므로 숫자 컬럼 변환
 numeric_cols = [
