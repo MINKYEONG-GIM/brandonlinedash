@@ -337,11 +337,21 @@ if snapshots_sheet_name and snapshots_sheet_name.strip():
         deltas = compute_flow_deltas(snapshots_df)
 
 # ----------------------------
-# 흐름 집계 카드 (스타일 수 기준, 클릭하면 해당 흐름 상세 현황 표시)
+# 흐름 집계 카드 (스타일 수 기준: 해당 단계 1건이라도 있으면 스타일 포함)
 # ----------------------------
 flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
-# verdict별 고유 스타일 수 (행 수가 아닌 스타일 수)
-flow_counts = filtered_df.groupby("verdict")["styleCode"].nunique()
+# 흐름별 조건: 해당 조건을 만족하는 행이 하나라도 있는 스타일 수
+_flow_conditions = {
+    "입고": (filtered_df["inboundQty"] > 0),
+    "출고": (filtered_df["outboundQty"] > 0),
+    "촬영": (filtered_df["isShot"] == 1),
+    "등록": (filtered_df["isRegistered"] == 1),
+    "판매개시": (filtered_df["isOnSale"] == 1),
+}
+flow_counts = pd.Series({
+    flow: filtered_df.loc[cond]["styleCode"].nunique()
+    for flow, cond in _flow_conditions.items()
+})
 
 if "selected_flow" not in st.session_state:
     st.session_state.selected_flow = flow_types[0]
@@ -371,7 +381,7 @@ with card_cols[-1]:
 
 selected_flow = st.session_state.selected_flow
 
-flow_df = filtered_df[filtered_df["verdict"] == selected_flow].copy()
+flow_df = filtered_df.loc[_flow_conditions[selected_flow]].copy()
 
 # 스타일 단위: styleCode 기준 집계 (수량 합산, 촬영/등록/판매개시는 하나라도 1이면 1)
 if view_mode == "스타일" and len(flow_df) > 0:
