@@ -21,17 +21,60 @@ def get_gsheet_client(credentials_dict):
     )
     return gspread.authorize(creds)
 
-def load_sheet_as_dataframe(client, spreadsheet_id, sheet_name=None):
+def load_sheet_as_dataframe(client, spreadsheet_id, sheet_name=None, header_row=0):
+    """header_row: 0 = 첫 번째 행이 헤더(기본), 1 = 두 번째 행이 헤더 등"""
     try:
         spreadsheet = client.open_by_key(spreadsheet_id)
         worksheet = spreadsheet.worksheet(sheet_name) if sheet_name else spreadsheet.sheet1
         rows = worksheet.get_all_values()
-        if not rows:
+        if not rows or len(rows) <= header_row:
             return pd.DataFrame()
-        return pd.DataFrame(rows[1:], columns=rows[0])
+        # 헤더·컬럼명 앞뒤 공백 제거
+        headers = [str(h).strip() for h in rows[header_row]]
+        data_rows = rows[header_row + 1:]
+        return pd.DataFrame(data_rows, columns=headers)
     except Exception as e:
         st.error(f"시트 읽기 오류: {e}")
         return None
+
+# 시트 컬럼명 → 앱 필수 컬럼명 매핑 (한글/다른 표기 지원)
+COLUMN_ALIASES = {
+    "브랜드": "brand",
+    "연도시즌": "yearSeason",
+    "연도·시즌": "yearSeason",
+    "연도 시즌": "yearSeason",
+    "스타일코드": "styleCode",
+    "스타일 코드": "styleCode",
+    "상품명": "productName",
+    "컬러코드": "colorCode",
+    "색상코드": "colorCode",
+    "컬러 코드": "colorCode",
+    "컬러명": "colorName",
+    "색상": "colorName",
+    "컬러 명": "colorName",
+    "사이즈코드": "sizeCode",
+    "사이즈 코드": "sizeCode",
+    "입고수량": "inboundQty",
+    "출고수량": "outboundQty",
+    "재고수량": "stockQty",
+    "판매수량": "salesQty",
+    "촬영여부": "isShot",
+    "is_shot": "isShot",
+    "등록여부": "isRegistered",
+    "is_registered": "isRegistered",
+    "판매개시여부": "isOnSale",
+    "is_on_sale": "isOnSale",
+}
+
+def apply_column_aliases(df):
+    """컬럼명 앞뒤 공백 제거 후 알려진 별칭으로 매핑"""
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    rename = {}
+    for col in list(df.columns):
+        if col in COLUMN_ALIASES:
+            rename[col] = COLUMN_ALIASES[col]
+    return df.rename(columns=rename) if rename else df
 
 # ----------------------------
 # 상태 판정 로직
@@ -125,6 +168,12 @@ items_sheet_name = st.sidebar.text_input(
     "상품 시트 이름 (비우면 첫 시트)",
     placeholder="Sheet1 또는 상품데이터",
 )
+header_row = st.sidebar.number_input(
+    "헤더 행 번호",
+    min_value=1,
+    value=1,
+    help="헤더가 몇 번째 행인지 (1=첫 줄, 2=둘째 줄 …)",
+)
 snapshots_sheet_name = st.sidebar.text_input(
     "스냅샷 시트 이름 (선택, 비우면 스냅샷 미사용)",
     placeholder="스냅샷",
@@ -137,12 +186,16 @@ items_df = load_sheet_as_dataframe(
     gs_client,
     spreadsheet_id,
     sheet_name=items_sheet_name if items_sheet_name.strip() else None,
+    header_row=int(header_row) - 1,
 )
 if items_df is None:
     st.stop()
 if len(items_df) == 0:
     st.warning("시트에 데이터가 없습니다.")
     st.stop()
+
+# 한글/다른 컬럼명을 필수 컬럼명으로 매핑
+items_df = apply_column_aliases(items_df)
 
 # 시트에서 읽은 값은 문자열이므로 숫자 컬럼 변환
 numeric_cols = [
@@ -154,15 +207,18 @@ for col in numeric_cols:
         items_df[col] = pd.to_numeric(items_df[col], errors="coerce").fillna(0).astype(int)
 
 required_columns = [
-    "brand","yearSeason","styleCode","productName",
-    "colorCode","colorName","sizeCode",
-    "inboundQty","outboundQty","stockQty","salesQty",
-    "isShot","isRegistered","isOnSale"
+    "brand", "yearSeason", "styleCode", "productName",
+    "colorCode", "colorName", "sizeCode",
+    "inboundQty", "outboundQty", "stockQty", "salesQty",
+    "isShot", "isRegistered", "isOnSale"
 ]
 
 missing = [col for col in required_columns if col not in items_df.columns]
 if missing:
     st.error(f"필수 컬럼 누락: {missing}")
+    st.write("**시트에 있는 컬럼:** ", list(items_df.columns))
+    st.caption("사이드바에서 '헤더 행 번호'를 바꿔 보거나, 시트 첫 행을 아래와 같이 맞춰 주세요.")
+    st.code(", ".join(required_columns))
     st.stop()
 
 # ----------------------------
