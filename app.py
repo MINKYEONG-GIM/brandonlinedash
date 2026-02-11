@@ -276,7 +276,7 @@ items_df["_year"] = items_df["yearSeason"].astype(str).str[:4]
 # ----------------------------
 # 필터 영역
 # ----------------------------
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 with col1:
     brand = st.selectbox("브랜드", sorted(items_df["brand"].unique()))
 with col2:
@@ -287,6 +287,12 @@ with col3:
         items_df.loc[items_df["_year"] == year, "yearSeason"].unique()
     ) if year is not None else []
     year_season = st.selectbox("시즌", season_options, key="season") if season_options else None
+with col4:
+    search = st.text_input(
+        "스타일코드 / 상태 검색",
+        placeholder="스타일코드 또는 판정 상태 검색",
+        label_visibility="collapsed",
+    )
 
 if year is not None and year_season is not None:
     filtered_df = items_df[
@@ -301,10 +307,6 @@ else:
     if year_season is not None and len(season_options):
         filtered_df = filtered_df[filtered_df["yearSeason"] == year_season]
 
-search = st.text_input(
-    "스타일코드 / 상태 검색",
-    placeholder="스타일코드 또는 판정 상태 검색",
-)
 if search:
     filtered_df = filtered_df[
         filtered_df["styleCode"].astype(str).str.contains(search, case=False, na=False)
