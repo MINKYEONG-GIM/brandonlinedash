@@ -169,6 +169,14 @@ if items_df is None or len(items_df) == 0:
 # ----------------------------
 # 전처리
 # ----------------------------
+# 구글시트 머릿글(한글) → 내부 컬럼명 매핑
+STYLECODE_ALIASES = ["스타일코드", "스타일 코드", "스타일코드(Now)"]
+if "styleCode" not in items_df.columns:
+    for alias in STYLECODE_ALIASES:
+        if alias in items_df.columns:
+            items_df = items_df.rename(columns={alias: "styleCode"})
+            break
+
 if "styleCode" in items_df.columns:
     items_df["brand"] = items_df["styleCode"].apply(brand_from_style_code)
 
@@ -204,9 +212,11 @@ items_df["verdict"] = items_df.apply(
 # ----------------------------
 # 브랜드 필터
 # ----------------------------
-if "brand" not in items_df.columns:
-    st.error("styleCode 컬럼이 필요합니다.")
+if "styleCode" not in items_df.columns:
+    st.error("구글시트에 '스타일코드' 컬럼이 필요합니다. (내부 컬럼명: styleCode)")
     st.stop()
+if "brand" not in items_df.columns:
+    items_df["brand"] = items_df["styleCode"].apply(brand_from_style_code)
 
 brands = sorted(items_df["brand"].unique())
 brand = st.selectbox("브랜드", brands)
