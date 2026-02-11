@@ -43,8 +43,11 @@ COLUMN_ALIASES = {
     "연도시즌": "yearSeason",
     "연도·시즌": "yearSeason",
     "연도 시즌": "yearSeason",
+    "시즌(Now)": "yearSeason",
+    "채널(Now)": "brand",
     "스타일코드": "styleCode",
     "스타일 코드": "styleCode",
+    "스타일코드(Now)": "styleCode",
     "상품명": "productName",
     "컬러코드": "colorCode",
     "색상코드": "colorCode",
@@ -52,12 +55,17 @@ COLUMN_ALIASES = {
     "컬러명": "colorName",
     "색상": "colorName",
     "컬러 명": "colorName",
+    "칼라(Now)": "colorName",
     "사이즈코드": "sizeCode",
     "사이즈 코드": "sizeCode",
     "입고수량": "inboundQty",
     "출고수량": "outboundQty",
     "재고수량": "stockQty",
     "판매수량": "salesQty",
+    "누적입고량(물류+입고조정+브랜드간)": "inboundQty",
+    "출고량[출고-반품](매장+고객+샘플+브랜드간)": "outboundQty",
+    "누적 판매량": "salesQty",
+    "판매재고량(입고량-누판량)": "stockQty",
     "촬영여부": "isShot",
     "is_shot": "isShot",
     "등록여부": "isRegistered",
@@ -66,15 +74,41 @@ COLUMN_ALIASES = {
     "is_on_sale": "isOnSale",
 }
 
+def ensure_year_season_from_columns(df):
+    """년도(Now) + 시즌(Now) → yearSeason 조합"""
+    if "yearSeason" in df.columns:
+        return df
+    if "년도(Now)" in df.columns and "시즌(Now)" in df.columns:
+        df = df.copy()
+        df["yearSeason"] = df["년도(Now)"].astype(str) + df["시즌(Now)"].astype(str)
+    return df
+
 def apply_column_aliases(df):
     """컬럼명 앞뒤 공백 제거 후 알려진 별칭으로 매핑"""
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
+    df = ensure_year_season_from_columns(df)
     rename = {}
     for col in list(df.columns):
         if col in COLUMN_ALIASES:
-            rename[col] = COLUMN_ALIASES[col]
+            target = COLUMN_ALIASES[col]
+            # 이미 있는 컬럼으로 덮어쓰지 않음 (예: yearSeason은 년도+시즌으로 이미 채움)
+            if target not in df.columns or col == target:
+                rename[col] = target
     return df.rename(columns=rename) if rename else df
+
+def fill_missing_required_columns(df, required_columns):
+    """없는 필수 컬럼을 기본값으로 채움 (시트 구조가 다를 때 대시보드만 동작하도록)"""
+    df = df.copy()
+    for col in required_columns:
+        if col not in df.columns:
+            if col in ("isShot", "isRegistered", "isOnSale"):
+                df[col] = 0
+            elif col in ("inboundQty", "outboundQty", "stockQty", "salesQty"):
+                df[col] = 0
+            else:
+                df[col] = ""
+    return df
 
 # ----------------------------
 # 상태 판정 로직
@@ -215,11 +249,8 @@ required_columns = [
 
 missing = [col for col in required_columns if col not in items_df.columns]
 if missing:
-    st.error(f"필수 컬럼 누락: {missing}")
-    st.write("**시트에 있는 컬럼:** ", list(items_df.columns))
-    st.caption("사이드바에서 '헤더 행 번호'를 바꿔 보거나, 시트 첫 행을 아래와 같이 맞춰 주세요.")
-    st.code(", ".join(required_columns))
-    st.stop()
+    items_df = fill_missing_required_columns(items_df, required_columns)
+    st.warning(f"일부 컬럼이 없어 기본값으로 채웠습니다: {missing}. (브랜드/연도·시즌 등은 시트 컬럼 매핑을 확인하세요.)")
 
 # ----------------------------
 # verdict 생성
