@@ -10,6 +10,7 @@ st.set_page_config(page_title="브랜드 상품 흐름 대시보드", layout="wi
 def get_gsheet_client(credentials_dict):
     if credentials_dict is None:
         return None
+
     import gspread
     from google.oauth2.service_account import Credentials
 
@@ -27,6 +28,7 @@ def get_gsheet_client(credentials_dict):
 def load_sheet_as_dataframe(client, spreadsheet_id, sheet_name=None, header_row=0):
     try:
         spreadsheet = client.open_by_key(spreadsheet_id)
+
         worksheet = (
             spreadsheet.worksheet(sheet_name)
             if sheet_name
@@ -34,13 +36,17 @@ def load_sheet_as_dataframe(client, spreadsheet_id, sheet_name=None, header_row=
         )
 
         rows = worksheet.get_all_values()
+
         if not rows or len(rows) <= header_row:
             return pd.DataFrame()
 
         headers = [str(h).strip() for h in rows[header_row]]
-        data_rows = rows[header_row + 1 :]
+        data_rows = rows[header_row + 1:]
 
-        return pd.DataFrame(data_rows, columns=headers)
+        df = pd.DataFrame(data_rows, columns=headers)
+        df.columns = [str(c).strip() for c in df.columns]
+
+        return df
 
     except Exception as e:
         st.error(f"시트 읽기 오류: {e}")
@@ -94,7 +100,7 @@ st.title("브랜드 상품 흐름 대시보드")
 st.caption("입고 · 출고 · 촬영 · 등록 · 판매개시 현황")
 
 # ----------------------------
-# Secrets → 시트 ID 수집
+# Secrets에서 시트 ID 가져오기
 # ----------------------------
 SPREADSHEET_OPTIONS = {
     "BASE_SPREADSHEET_ID": "BASE",
@@ -118,6 +124,16 @@ def get_spreadsheet_ids_from_secrets():
     return ids
 
 
+spreadsheet_ids = get_spreadsheet_ids_from_secrets()
+
+if not spreadsheet_ids:
+    st.error("Secrets에 스프레드시트 ID가 없습니다.")
+    st.stop()
+
+# 🔥 기존 구조 유지: 첫 번째 시트 자동 선택
+selected_label = list(spreadsheet_ids.keys())[0]
+spreadsheet_id = spreadsheet_ids[selected_label]
+
 # ----------------------------
 # Google 인증
 # ----------------------------
@@ -136,22 +152,6 @@ if not gs_client:
     st.error("Google 인증 정보가 Secrets에 없습니다.")
     st.stop()
 
-spreadsheet_ids = get_spreadsheet_ids_from_secrets()
-
-if not spreadsheet_ids:
-    st.error("Secrets에 스프레드시트 ID가 없습니다.")
-    st.stop()
-
-# ----------------------------
-# 🔥 시트 선택 UI (핵심 추가 부분)
-# ----------------------------
-selected_label = st.selectbox(
-    "데이터 시트 선택",
-    list(spreadsheet_ids.keys()),
-)
-
-spreadsheet_id = spreadsheet_ids[selected_label]
-
 # ----------------------------
 # 데이터 로드
 # ----------------------------
@@ -167,10 +167,8 @@ if items_df is None or len(items_df) == 0:
     st.stop()
 
 # ----------------------------
-# 기본 전처리
+# 전처리
 # ----------------------------
-items_df.columns = [str(c).strip() for c in items_df.columns]
-
 if "styleCode" in items_df.columns:
     items_df["brand"] = items_df["styleCode"].apply(brand_from_style_code)
 
@@ -206,6 +204,10 @@ items_df["verdict"] = items_df.apply(
 # ----------------------------
 # 브랜드 필터
 # ----------------------------
+if "brand" not in items_df.columns:
+    st.error("styleCode 컬럼이 필요합니다.")
+    st.stop()
+
 brands = sorted(items_df["brand"].unique())
 brand = st.selectbox("브랜드", brands)
 
