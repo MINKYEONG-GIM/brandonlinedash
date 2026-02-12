@@ -574,12 +574,12 @@ col1, col2, col3, col4 = st.columns(4)
 with col1:
     brand = st.selectbox("브랜드", sorted(items_df["brand"].unique()))
 with col2:
-    years = sorted(items_df["_year"].dropna().unique())
-    year = st.selectbox("연도", years, key="year") if years else None
+    year = "2026"  # 연도 고정
+    st.selectbox("연도", [year], key="year", disabled=True)
 with col3:
     season_options = sorted(
         items_df.loc[items_df["_year"] == year, "yearSeason"].unique()
-    ) if year is not None else []
+    )
     year_seasons = st.multiselect(
         "시즌",
         season_options,
