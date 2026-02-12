@@ -10,6 +10,91 @@ import unicodedata
 # ================================
 # 🔎 CV_SPREADSHEET_ID + MERGE 디버그
 # ================================
+# =========================================================
+# 🔎 CV 전체 디버그 (파일 맨 아래에 붙여넣기)
+# =========================================================
+
+st.markdown("## 🔎 CV 디버그 시작")
+
+# 1️⃣ CV_SPREADSHEET_ID 확인
+cv_sid = st.secrets.get("CV_SPREADSHEET_ID", None)
+st.write("CV_SPREADSHEET_ID:", cv_sid)
+
+if not cv_sid:
+    st.error("❌ CV_SPREADSHEET_ID가 secrets에 없습니다.")
+else:
+    st.success("✅ CV_SPREADSHEET_ID 정상 로딩")
+
+# 2️⃣ shot_reg_df 존재 확인
+if "shot_reg_df" not in globals():
+    st.error("❌ shot_reg_df가 생성되지 않았습니다.")
+else:
+    st.success("✅ shot_reg_df 존재")
+    st.write("shot_reg_df 전체 행 개수:", len(shot_reg_df))
+    st.write("shot_reg_df 컬럼:", list(shot_reg_df.columns))
+
+    if "brand" in shot_reg_df.columns:
+        cv_only = shot_reg_df[shot_reg_df["brand"] == "클라비스"]
+        st.write("shot_reg_df 내 클라비스 행 개수:", len(cv_only))
+        st.write("클라비스 샘플:")
+        st.write(cv_only.head())
+    else:
+        st.error("❌ shot_reg_df에 brand 컬럼이 없음")
+
+# 3️⃣ items_df 존재 확인
+if "items_df" not in globals():
+    st.error("❌ items_df가 생성되지 않았습니다.")
+else:
+    st.success("✅ items_df 존재")
+    st.write("items_df 전체 행 개수:", len(items_df))
+    st.write("items_df 컬럼:", list(items_df.columns))
+
+# 4️⃣ BASE ↔ CV 매칭 확인
+if "shot_reg_df" in globals() and "items_df" in globals():
+
+    if "_styleCode" in shot_reg_df.columns and "_styleCode" in items_df.columns:
+
+        cv_styles = shot_reg_df[
+            shot_reg_df.get("brand") == "클라비스"
+        ]["_styleCode"].unique()
+
+        base_cv = items_df[
+            items_df["_styleCode"].isin(cv_styles)
+        ]
+
+        st.markdown("### 📌 BASE ↔ CV 매칭 결과")
+        st.write("CV 스타일코드 개수:", len(cv_styles))
+        st.write("BASE에서 매칭된 CV 스타일 개수:", len(base_cv))
+
+        if len(base_cv) > 0:
+            st.write("매칭 샘플:")
+            cols_to_show = ["_styleCode"]
+            if "brand" in base_cv.columns:
+                cols_to_show.append("brand")
+            if "__shot_done" in base_cv.columns:
+                cols_to_show.append("__shot_done")
+
+            st.write(base_cv[cols_to_show].head())
+        else:
+            st.warning("⚠ BASE와 CV 스타일코드가 매칭되지 않음")
+
+    else:
+        st.error("❌ _styleCode 컬럼이 둘 중 하나에 없음")
+
+# 5️⃣ 특정 스타일코드 직접 확인
+if "items_df" in globals():
+    st.markdown("### 🎯 CVJLG1101M 직접 확인")
+
+    check_row = items_df[
+        items_df.get("_styleCode", pd.Series()).astype(str).str.strip() == "CVJLG1101M"
+    ]
+
+    if len(check_row) > 0:
+        st.write(check_row)
+    else:
+        st.warning("⚠ BASE에서 CVJLG1101M 찾지 못함")
+
+st.markdown("## 🔎 CV 디버그 종료")
 
 st.markdown("## 🔎 CV 디버그 시작")
 
