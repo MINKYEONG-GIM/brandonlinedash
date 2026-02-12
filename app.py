@@ -45,89 +45,38 @@ cv_data = pd.DataFrame(cv_ws.get_all_records())
 st.write("CV 행 개수:", len(cv_data))
 st.write("CV 컬럼:", list(cv_data.columns))
 
-# 5️⃣ 스타일코드 컬럼 자동 탐색
-def find_style_col(df):
-    for col in df.columns:
-        if "스타일" in col or "style" in col.lower():
-            return col
-    return None
+# 1️⃣ 컬럼명 원본 출력
+st.write("=== BASE 원본 컬럼 목록 ===")
+st.write(base_df.columns.tolist())
 
-base_style_col = find_style_col(base_data)
-cv_style_col = find_style_col(cv_data)
-
-st.write("BASE 스타일컬럼:", base_style_col)
-st.write("CV 스타일컬럼:", cv_style_col)
-
-if base_style_col and cv_style_col:
-
-    base_styles = (
-        base_data[base_style_col]
-        .astype(str)
-        .str.strip()
-        .unique()
-    )
-
-    cv_styles = (
-        cv_data[cv_style_col]
-        .astype(str)
-        .str.strip()
-        .unique()
-    )
-
-    intersection = set(base_styles) & set(cv_styles)
-
-    st.markdown("### 📌 매칭 결과")
-    st.write("BASE 스타일 개수:", len(base_styles))
-    st.write("CV 스타일 개수:", len(cv_styles))
-    st.write("교집합 개수:", len(intersection))
-
-    if len(intersection) > 0:
-        st.write("교집합 샘플:")
-        st.write(list(intersection)[:10])
-    else:
-        st.error("❌ 스타일코드 매칭 0개 → merge 불가능 상태")
-
-else:
-    st.error("❌ 스타일코드 컬럼을 찾지 못함")
-
-st.markdown("## 🔎 BASE vs CV 실제 매칭 확인")
-
-import gspread
-from google.oauth2.service_account import Credentials
-
-scope = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-
-creds = Credentials.from_service_account_info(
-    st.secrets["google_service_account"], scopes=scope
-)
-
-gc = gspread.authorize(creds)
-
-base_sid = st.secrets["BASE_SPREADSHEET_ID"]
-cv_sid = st.secrets["CV_SPREADSHEET_ID"]
-
-base_df = pd.DataFrame(gc.open_by_key(base_sid).sheet1.get_all_records())
-cv_df = pd.DataFrame(gc.open_by_key(cv_sid).sheet1.get_all_records())
-
-st.write("BASE 행 개수:", len(base_df))
-st.write("CV 행 개수:", len(cv_df))
-
-base_styles = base_df.iloc[:,0].astype(str).str.strip().unique()
-cv_styles = cv_df.iloc[:,0].astype(str).str.strip().unique()
-
-intersection = set(base_styles) & set(cv_styles)
-
-st.write("교집합 개수:", len(intersection))
-st.write("교집합 샘플:", list(intersection)[:10])
+st.write("=== CV 원본 컬럼 목록 ===")
+st.write(cv_df.columns.tolist())
 
 
-check = items_df[
-    items_df["_styleCode"] == "CVJLG1101M"
-][["_styleCode", "__shot_done"]]
+# 2️⃣ 컬럼명 strip 처리
+base_df.columns = base_df.columns.astype(str).str.strip()
+cv_df.columns = cv_df.columns.astype(str).str.strip()
 
-st.write(check)
+st.write("=== BASE strip 후 컬럼 목록 ===")
+st.write(base_df.columns.tolist())
+
+st.write("=== CV strip 후 컬럼 목록 ===")
+st.write(cv_df.columns.tolist())
 
 
+# 3️⃣ 정확히 존재하는지 확인
+st.write("=== 정확 일치 여부 ===")
+
+base_has = "스타일코드(Now)" in base_df.columns
+cv_has = "스타일코드" in cv_df.columns
+
+st.write("BASE에 '스타일코드(Now)' 존재 여부:", base_has)
+st.write("CV에 '스타일코드' 존재 여부:", cv_has)
+
+
+# 4️⃣ 유사 컬럼 찾기 (혹시 보이지 않는 문자 있을 경우 대비)
+st.write("=== BASE 유사 컬럼 후보 ===")
+st.write([c for c in base_df.columns if "스타일" in c])
+
+st.write("=== CV 유사 컬럼 후보 ===")
+st.write([c for c in cv_df.columns if "스타일" in c])
