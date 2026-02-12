@@ -584,7 +584,6 @@ with col3:
         "시즌",
         season_options,
         default=season_options if season_options else [],
-        format_func=lambda x: f"{x} 시즌 상품" if x and str(x).strip() else str(x),
         key="season",
     )
 with col4:
