@@ -677,10 +677,10 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
     if shot_reg_parts:
         shot_reg_df = pd.concat(shot_reg_parts, ignore_index=True)
         items_df["_styleCode"] = items_df["styleCode"].apply(_normalize_style_code_for_merge)
-        merged = items_df[["brand", "_styleCode"]].merge(
-            shot_reg_df,
-            left_on=["brand", "_styleCode"],
-            right_on=["brand", "_styleCode"],
+        merged = items_df[["_styleCode"]].merge(
+            shot_reg_df.drop(columns=["brand"]),
+            left_on="_styleCode",
+            right_on="_styleCode",
             how="left",
         )
         items_df["__shot_done"] = merged["__shot_done"].fillna(0).astype(int)
