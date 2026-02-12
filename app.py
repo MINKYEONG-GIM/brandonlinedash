@@ -921,3 +921,69 @@ with st.expander("🔍 촬영 열이 X로 나오는 이유 확인"):
             debug_df["촬영 표시"] = debug_df["__shot_done"].map(lambda x: "O" if int(x) == 1 else "X")
             st.dataframe(debug_df, use_container_width=True, hide_index=True)
             st.caption("위 표에서 **촬영 표시가 X**인 이유: 해당 행의 날짜 컬럼 값이 비어 있거나, 날짜로 인식되지 않았거나, '날짜처럼 보이는 값' 조건에 맞지 않음.")
+
+# ----------------------------
+# 🔎 BASE vs CV 스타일코드 매칭 확인
+# ----------------------------
+with st.expander("🔎 BASE vs CV 실제 매칭 확인"):
+
+    try:
+        base_sid = spreadsheet_ids.get("BASE")
+        cv_sid = spreadsheet_ids.get("CV")
+
+        if not base_sid or not cv_sid:
+            st.error("BASE_SPREADSHEET_ID 또는 CV_SPREADSHEET_ID가 Secrets에 없습니다.")
+        else:
+            # BASE 불러오기
+            base_df_debug = _cached_load_sheet(
+                str(base_sid).strip(),
+                "",
+                0
+            )
+
+            # CV 불러오기
+            cv_df_debug = _cached_load_sheet(
+                str(cv_sid).strip(),
+                "",
+                0
+            )
+
+            if base_df_debug is None or cv_df_debug is None:
+                st.error("시트 로딩 실패")
+            else:
+                st.write("BASE 행 개수:", len(base_df_debug))
+                st.write("CV 행 개수:", len(cv_df_debug))
+
+                # 컬럼 존재 확인
+                if "스타일코드(Now)" not in base_df_debug.columns:
+                    st.error("BASE에 '스타일코드(Now)' 컬럼 없음")
+                elif "스타일코드" not in cv_df_debug.columns:
+                    st.error("CV에 '스타일코드' 컬럼 없음")
+                else:
+                    base_styles = (
+                        base_df_debug["스타일코드(Now)"]
+                        .astype(str)
+                        .str.strip()
+                        .str.upper()
+                    )
+
+                    cv_styles = (
+                        cv_df_debug["스타일코드"]
+                        .astype(str)
+                        .str.strip()
+                        .str.upper()
+                    )
+
+                    intersection = set(base_styles) & set(cv_styles)
+
+                    st.write("교집합 개수:", len(intersection))
+
+                    if len(intersection) > 0:
+                        st.write("교집합 샘플:", list(intersection)[:10])
+                    else:
+                        st.warning("교집합이 0입니다.")
+                        st.write("BASE 샘플 5개:", base_styles.head(5).tolist())
+                        st.write("CV 샘플 5개:", cv_styles.head(5).tolist())
+
+    except Exception as e:
+        st.error(f"디버그 중 오류: {e}")
