@@ -70,6 +70,31 @@ def open_or_create_spreadsheet(client, spreadsheet_id=None, spreadsheet_title=No
         return client.create(title)
 
 
+@st.cache_data(ttl=90)
+def _cached_load_sheet(spreadsheet_id: str, sheet_name: str, header_row: int):
+    """시트 읽기 결과를 90초 캐시하여 API 429(Quota exceeded) 완화."""
+    if not spreadsheet_id or not str(spreadsheet_id).strip():
+        return None
+    try:
+        if "gcp_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+        elif "google_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["google_service_account"])
+        else:
+            return None
+    except Exception:
+        return None
+    client = get_gsheet_client(creds_dict)
+    if client is None:
+        return None
+    return load_sheet_as_dataframe(
+        client,
+        spreadsheet_id,
+        sheet_name=sheet_name or None,
+        header_row=header_row,
+    )
+
+
 def load_sheet_as_dataframe(
     client,
     spreadsheet_id=None,
@@ -504,14 +529,24 @@ snapshots_sheet_name = ""
 if not gs_client:
     st.info("Streamlit Secrets에 **gcp_service_account** 또는 **google_service_account**를 설정해 주세요.")
     st.stop()
-items_df = load_sheet_as_dataframe(
-    gs_client,
-    spreadsheet_id,
-    sheet_name=items_sheet_name if items_sheet_name.strip() else None,
-    header_row=header_row,
-    spreadsheet_title=spreadsheet_title,
-    create_spreadsheet_if_missing=create_spreadsheet_if_missing,
-)
+
+# API 429(Quota exceeded) 완화: 시트 ID만 있을 때 90초 캐시 사용 (header_row 자동감지(-1)일 땐 미사용)
+use_cache = spreadsheet_id and not create_spreadsheet_if_missing and not spreadsheet_title and (header_row >= 0)
+if use_cache:
+    items_df = _cached_load_sheet(
+        str(spreadsheet_id).strip(),
+        items_sheet_name.strip() if items_sheet_name else "",
+        int(header_row),
+    )
+else:
+    items_df = load_sheet_as_dataframe(
+        gs_client,
+        spreadsheet_id,
+        sheet_name=items_sheet_name if items_sheet_name.strip() else None,
+        header_row=header_row,
+        spreadsheet_title=spreadsheet_title,
+        create_spreadsheet_if_missing=create_spreadsheet_if_missing,
+    )
 if items_df is None:
     st.stop()
 if len(items_df) == 0:
@@ -579,11 +614,11 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
         if not sid:
             continue
         try:
-            b_df = load_sheet_as_dataframe(
-                gs_client,
-                sid,
-                sheet_name=items_sheet_name.strip() or None,
-                header_row=header_row,
+            _hr = int(header_row) if header_row >= 0 else 0
+            b_df = _cached_load_sheet(
+                str(sid).strip(),
+                items_sheet_name.strip() if items_sheet_name else "",
+                _hr,
             )
             if b_df is None or len(b_df) == 0:
                 continue
