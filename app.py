@@ -446,6 +446,7 @@ if missing:
 # - 리터칭완료일 등 날짜가 있으면 O로 표시
 # ----------------------------
 items_df["__shot_done"] = compute_shot_done_series(items_df)
+shot_date_column = _find_photo_date_column(items_df)  # 화면에서 원인 확인용
 
 # ----------------------------
 # verdict 생성
@@ -641,3 +642,27 @@ st.download_button(
     file_name=f"상세현황_{selected_flow}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
+# ----------------------------
+# 촬영 O/X 원인 확인 (디버그)
+# ----------------------------
+with st.expander("🔍 촬영 열이 X로 나오는 이유 확인"):
+    st.caption("특정 스타일코드가 촬영 O가 아니라 X로 나올 때, 어떤 컬럼·값으로 판정했는지 확인합니다.")
+    debug_style = st.text_input("스타일코드", value="SPABGA9A51", key="debug_style")
+    if shot_date_column:
+        st.write(f"**촬영 판정에 사용 중인 컬럼:** `{shot_date_column}` (여기에 유효한 날짜가 있으면 O)")
+    else:
+        st.write("**촬영 판정에 사용 중인 컬럼:** 없음 → `isShot`(촬영여부) 값으로 판정 중. 시트에 '리터칭완료일' 또는 '리터칭' 포함 컬럼이 있어야 날짜 기준으로 O 표시됩니다.")
+    if debug_style and "styleCode" in items_df.columns:
+        rows = items_df[items_df["styleCode"].astype(str).str.strip() == str(debug_style).strip()]
+        if len(rows) == 0:
+            st.warning(f"스타일코드 '{debug_style}'에 해당하는 행이 없습니다. (필터 조건이나 시트 데이터 확인)")
+        else:
+            cols_show = ["styleCode", "__shot_done"]
+            if shot_date_column and shot_date_column in items_df.columns:
+                cols_show.insert(1, shot_date_column)
+            cols_show = [c for c in cols_show if c in rows.columns]
+            debug_df = rows[cols_show].copy()
+            debug_df["촬영 표시"] = debug_df["__shot_done"].map(lambda x: "O" if int(x) == 1 else "X")
+            st.dataframe(debug_df, use_container_width=True, hide_index=True)
+            st.caption("위 표에서 **촬영 표시가 X**인 이유: 해당 행의 날짜 컬럼 값이 비어 있거나, 날짜로 인식되지 않았거나, '날짜처럼 보이는 값' 조건에 맞지 않음.")
