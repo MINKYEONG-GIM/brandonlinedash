@@ -545,13 +545,48 @@ if missing:
     items_df = fill_missing_required_columns(items_df, required_columns)
 
 # ----------------------------
-# 촬영 완료 여부 계산 (__shot_done)
-# - 리터칭완료일 등 날짜가 있으면 O로 표시
+# 촬영 완료 여부 (__shot_done): BASE가 아니라 SP 시트에서만 읽어서 merge
 # ----------------------------
-# Secrets에 촬영 날짜 컬럼명 지정 가능 (시트 컬럼명이 다를 때)
 preferred_shot_date_col = (st.secrets.get("SHOT_DATE_COLUMN") or "").strip() or None
-items_df["__shot_done"] = compute_shot_done_series(items_df, preferred_date_column=preferred_shot_date_col)
-shot_date_column = _find_photo_date_column(items_df, preferred_name=preferred_shot_date_col)  # 화면에서 원인 확인용
+shot_date_column = None
+sp_spreadsheet_id = spreadsheet_ids.get("SP") if spreadsheet_ids else None
+
+if sp_spreadsheet_id and gs_client and "styleCode" in items_df.columns:
+    try:
+        sp_df = load_sheet_as_dataframe(
+            gs_client,
+            sp_spreadsheet_id,
+            sheet_name=items_sheet_name.strip() or None,
+            header_row=header_row,
+        )
+        if sp_df is not None and len(sp_df) > 0:
+            sp_df.columns = [str(c).strip() for c in sp_df.columns]
+            date_col = _find_photo_date_column(sp_df, preferred_name=preferred_shot_date_col)
+            if date_col and date_col in sp_df.columns:
+                sp_df["__shot_done"] = _date_cell_to_01(sp_df[date_col])
+                shot_date_column = f"SP 시트 · {date_col}"
+                sc = "styleCode" if "styleCode" in sp_df.columns else ("스타일코드" if "스타일코드" in sp_df.columns else None)
+                if sc:
+                    if sc == "스타일코드":
+                        sp_df["_styleCode"] = sp_df["스타일코드"].astype(str).str.strip()
+                    else:
+                        sp_df["_styleCode"] = sp_df["styleCode"].astype(str).str.strip()
+                    sp_shot_by_style = sp_df.groupby("_styleCode", dropna=False)["__shot_done"].max()
+                    items_df["__shot_done"] = (
+                        items_df["styleCode"].astype(str).str.strip().map(sp_shot_by_style).fillna(0).astype(int)
+                    )
+            else:
+                items_df["__shot_done"] = 0
+        else:
+            items_df["__shot_done"] = 0
+    except Exception:
+        items_df["__shot_done"] = 0
+else:
+    if not sp_spreadsheet_id:
+        items_df["__shot_done"] = 0
+    else:
+        items_df["__shot_done"] = compute_shot_done_series(items_df, preferred_date_column=preferred_shot_date_col)
+        shot_date_column = _find_photo_date_column(items_df, preferred_name=preferred_shot_date_col)
 
 # ----------------------------
 # verdict 생성
