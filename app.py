@@ -295,9 +295,9 @@ def get_verdict(inbound, outbound, is_shot, is_registered, is_on_sale):
     return "대기"
 
 # ----------------------------
-# 촬영 완료 판정: 리터칭완료일 등 날짜 컬럼
+# 촬영 완료 판정: 리터칭완료일·업로드완료일 등 날짜 컬럼
 # ----------------------------
-# 규칙: 머릿글 "리터칭완료일" 열에 "2026-01-20" 같은 날짜 값이 들어 있으면 그 행은 촬영 O로 표시.
+# 규칙: "리터칭완료일" 또는 "업로드완료일" 열에 날짜 값이 있으면 그 행은 촬영 O. (클라비스는 업로드완료일 사용)
 
 def _normalize_col_name(name):
     """컬럼명 비교용: 앞뒤 공백·제어문자 제거, 유니코드 정규화, 공백 통일."""
@@ -312,7 +312,7 @@ def _normalize_col_name(name):
     return s.replace(" ", "").replace("\u3000", "")
 
 def _find_photo_date_column(df, preferred_name=None):
-    """촬영 완료를 판정할 날짜 컬럼. 리터칭완료일 우선, 없으면 촬영일자/포토촬영일 등."""
+    """촬영 완료를 판정할 날짜 컬럼. 리터칭완료일·업로드완료일 우선, 없으면 촬영일자/포토촬영일 등."""
     # 0순위: Secrets에 지정된 컬럼명이 있으면 정확히 그 컬럼 사용
     if preferred_name and str(preferred_name).strip():
         name = str(preferred_name).strip()
@@ -328,16 +328,21 @@ def _find_photo_date_column(df, preferred_name=None):
         raw = str(c)
         if "리터칭" in raw or "retouch" in raw.lower():
             return c
-    # 2순위: 머릿글 "리터칭완료일" 정확히 (공백/제어문자만 정규화)
+    # 2순위: 업로드완료일 (클라비스 등 해당 시트에서 사용)
+    for c in df.columns:
+        raw = str(c)
+        if "업로드완료일" in raw or _normalize_col_name(c) == "업로드완료일":
+            return c
+    # 3순위: 머릿글 "리터칭완료일" 정확히 (공백/제어문자만 정규화)
     for c in df.columns:
         if _normalize_col_name(c) == "리터칭완료일":
             return c
-    # 3순위: 리터칭 관련 (정규화 후 포함 여부)
+    # 4순위: 리터칭 관련 (정규화 후 포함 여부)
     for c in df.columns:
         s_nospace = _normalize_col_name(c)
         if "리터칭" in s_nospace:
             return c
-    # 4순위: 촬영일자, 포토촬영일, 보정완료일 등
+    # 5순위: 촬영일자, 포토촬영일, 보정완료일 등
     for c in df.columns:
         s = str(c).strip()
         s_nospace = _normalize_col_name(c)
@@ -350,7 +355,7 @@ def _find_photo_date_column(df, preferred_name=None):
             or s in ("photoShotDate", "shotDate", "retouchDoneDate", "retouch_date", "촬영일자", "촬영 일자")
         ):
             return c
-    # 5순위: 'OO완료일' 형태 중 등록/판매 제외
+    # 6순위: 'OO완료일' 형태 중 등록/판매 제외
     for c in df.columns:
         s_nospace = _normalize_col_name(c)
         if "완료일" in s_nospace and "등록" not in s_nospace and "판매" not in s_nospace:
@@ -874,10 +879,10 @@ with st.expander("🔍 촬영 열이 X로 나오는 이유 확인"):
         st.write(f"**촬영 판정에 사용 중인 컬럼:** `{shot_date_column}` (여기에 유효한 날짜가 있으면 O)")
     else:
         st.write("**촬영 판정에 사용 중인 컬럼:** 없음 → `isShot`(촬영여부) 값으로 판정 중.")
-        st.caption("시트에서 읽은 컬럼 이름 중에 촬영/리터칭 날짜 컬럼이 있어야 O로 표시됩니다. 아래에서 해당 컬럼을 확인한 뒤, 없다면 **헤더가 2행**이면 Secrets에 **HEADER_ROW** = 2 를 넣거나, **SHOT_DATE_COLUMN** = 컬럼이름(정확히)으로 지정하세요.")
+        st.caption("시트에서 읽은 컬럼 이름 중에 촬영/리터칭/업로드완료 날짜 컬럼(리터칭완료일 또는 업로드완료일 등)이 있어야 O로 표시됩니다. 아래에서 해당 컬럼을 확인한 뒤, 없다면 **헤더가 2행**이면 Secrets에 **HEADER_ROW** = 2 를 넣거나, **SHOT_DATE_COLUMN** = 컬럼이름(정확히)으로 지정하세요.")
         all_cols = [c for c in items_df.columns if not str(c).startswith("_")]  # __shot_done, _year 제외
         # '리터칭' 포함 컬럼 전체 검색 (연관 후보에서 내부 컬럼 제외)
-        date_like = [c for c in all_cols if any(k in str(c) for k in ("촬영", "리터칭", "보정", "완료일", "일자", "날짜", "date", "retouch")) and "shot_done" not in str(c).lower()]
+        date_like = [c for c in all_cols if any(k in str(c) for k in ("촬영", "리터칭", "업로드", "보정", "완료일", "일자", "날짜", "date", "retouch")) and "shot_done" not in str(c).lower()]
         if date_like:
             st.write("**리터칭/촬영 관련 컬럼 (전체):**", ", ".join(f"`{c}`" for c in date_like))
         else:
