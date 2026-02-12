@@ -90,4 +90,36 @@ if base_style_col and cv_style_col:
 else:
     st.error("❌ 스타일코드 컬럼을 찾지 못함")
 
-st.markdown("## 🔎 확인 종료")
+st.markdown("## 🔎 BASE vs CV 실제 매칭 확인")
+
+import gspread
+from google.oauth2.service_account import Credentials
+
+scope = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+creds = Credentials.from_service_account_info(
+    st.secrets["google_service_account"], scopes=scope
+)
+
+gc = gspread.authorize(creds)
+
+base_sid = st.secrets["BASE_SPREADSHEET_ID"]
+cv_sid = st.secrets["CV_SPREADSHEET_ID"]
+
+base_df = pd.DataFrame(gc.open_by_key(base_sid).sheet1.get_all_records())
+cv_df = pd.DataFrame(gc.open_by_key(cv_sid).sheet1.get_all_records())
+
+st.write("BASE 행 개수:", len(base_df))
+st.write("CV 행 개수:", len(cv_df))
+
+base_styles = base_df.iloc[:,0].astype(str).str.strip().unique()
+cv_styles = cv_df.iloc[:,0].astype(str).str.strip().unique()
+
+intersection = set(base_styles) & set(cv_styles)
+
+st.write("교집합 개수:", len(intersection))
+st.write("교집합 샘플:", list(intersection)[:10])
+
