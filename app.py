@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import unicodedata
 
 
 
@@ -101,9 +102,18 @@ def load_sheet_as_dataframe(
             worksheet = spreadsheet.sheet1
 
         rows = worksheet.get_all_values()
-        if not rows or len(rows) <= header_row:
+        if not rows:
             return pd.DataFrame()
-        # 헤더·컬럼명 앞뒤 공백 제거
+        # 자동 헤더 감지: 1행에 '리터칭'이 없으면 2행·3행 시도 (실제 머릿글이 2행인 시트 대응)
+        if header_row == -1:
+            header_row = 0
+            for try_row in range(min(3, len(rows))):
+                try_headers = [str(h).strip() for h in rows[try_row]]
+                if any("리터칭" in str(h) for h in try_headers):
+                    header_row = try_row
+                    break
+        if len(rows) <= header_row:
+            return pd.DataFrame()
         headers = [str(h).strip() for h in rows[header_row]]
         data_rows = rows[header_row + 1:]
         return pd.DataFrame(data_rows, columns=headers)
@@ -159,12 +169,10 @@ COLUMN_ALIASES = {
     "출고량[출고-반품](매장+고객+샘플+브랜드간)": "outboundQty",
     "누적 판매량": "salesQty",
     "판매재고량(입고량-누판량)": "stockQty",
-    "촬영여부": "isShot",
-    "is_shot": "isShot",
-    "등록여부": "isRegistered",
-    "is_registered": "isRegistered",
-    "판매개시여부": "isOnSale",
-    "is_on_sale": "isOnSale",
+    "리터칭 완료일": "isShot",
+    "리터칭완료일": "isShot",
+    "공홈등록일": "isRegistered",
+    "공홈 등록일": "isRegistered",
 }
 
 def ensure_year_season_from_columns(df):
@@ -225,11 +233,15 @@ def get_verdict(inbound, outbound, is_shot, is_registered, is_on_sale):
 # 규칙: 머릿글 "리터칭완료일" 열에 "2026-01-20" 같은 날짜 값이 들어 있으면 그 행은 촬영 O로 표시.
 
 def _normalize_col_name(name):
-    """컬럼명 비교용: 앞뒤 공백·제어문자 제거, 공백 통일."""
+    """컬럼명 비교용: 앞뒤 공백·제어문자 제거, 유니코드 정규화, 공백 통일."""
     if name is None or not isinstance(name, str):
         return ""
-    s = str(name).strip()
-    s = "".join(c for c in s if ord(c) >= 32 or c in "\t\n\r")  # 제어문자 제거
+    try:
+        s = unicodedata.normalize("NFKC", str(name))
+    except Exception:
+        s = str(name)
+    s = s.strip()
+    s = "".join(c for c in s if ord(c) >= 32 or c in "\t\n\r")
     return s.replace(" ", "").replace("\u3000", "")
 
 def _find_photo_date_column(df, preferred_name=None):
@@ -244,17 +256,21 @@ def _find_photo_date_column(df, preferred_name=None):
         for c in df.columns:
             if _normalize_col_name(c) == name_norm:
                 return c
-    # 1순위: 머릿글 "리터칭완료일" 정확히 (공백/제어문자만 정규화)
+    # 1순위: 이름에 "리터칭"이 포함된 컬럼 (공백/특수문자 무관, 가장 관대하게)
+    for c in df.columns:
+        raw = str(c)
+        if "리터칭" in raw or "retouch" in raw.lower():
+            return c
+    # 2순위: 머릿글 "리터칭완료일" 정확히 (공백/제어문자만 정규화)
     for c in df.columns:
         if _normalize_col_name(c) == "리터칭완료일":
             return c
-    # 2순위: 리터칭 관련 (리터칭완료일, 리터칭일, 리터칭 일자 등)
+    # 3순위: 리터칭 관련 (정규화 후 포함 여부)
     for c in df.columns:
-        s = str(c).strip()
         s_nospace = _normalize_col_name(c)
-        if "리터칭" in s_nospace or "retouch" in s.lower():
+        if "리터칭" in s_nospace:
             return c
-    # 3순위: 촬영일자, 포토촬영일, 보정완료일 등
+    # 4순위: 촬영일자, 포토촬영일, 보정완료일 등
     for c in df.columns:
         s = str(c).strip()
         s_nospace = _normalize_col_name(c)
@@ -267,7 +283,7 @@ def _find_photo_date_column(df, preferred_name=None):
             or s in ("photoShotDate", "shotDate", "retouchDoneDate", "retouch_date", "촬영일자", "촬영 일자")
         ):
             return c
-    # 4순위: 'OO완료일' 형태 중 등록/판매 제외
+    # 5순위: 'OO완료일' 형태 중 등록/판매 제외
     for c in df.columns:
         s_nospace = _normalize_col_name(c)
         if "완료일" in s_nospace and "등록" not in s_nospace and "판매" not in s_nospace:
@@ -422,7 +438,14 @@ else:
     selected_label = list(spreadsheet_ids.keys())[0]
     spreadsheet_id = spreadsheet_ids[selected_label]
 items_sheet_name = ""
-header_row = 1
+# 헤더 행(1-based). 기본 1 = 1행이 머릿글. 2행이 헤더인 시트면 Secrets에 HEADER_ROW = 2. 자동감지는 HEADER_ROW = 0
+_header_raw = st.secrets.get("HEADER_ROW")
+if _header_raw is None or str(_header_raw).strip() == "":
+    header_row = 0  # 1행이 헤더 (0-based)
+elif str(_header_raw).strip().lower() in ("0", "auto", "자동"):
+    header_row = -1  # 1~3행 중 '리터칭' 포함된 행 자동 선택
+else:
+    header_row = int(_header_raw) - 1  # 1-based → 0-based
 snapshots_sheet_name = ""
 
 if not gs_client:
@@ -432,7 +455,7 @@ items_df = load_sheet_as_dataframe(
     gs_client,
     spreadsheet_id,
     sheet_name=items_sheet_name if items_sheet_name.strip() else None,
-    header_row=int(header_row) - 1,
+    header_row=header_row,
     spreadsheet_title=spreadsheet_title,
     create_spreadsheet_if_missing=create_spreadsheet_if_missing,
 )
@@ -450,6 +473,14 @@ if "styleCode" in items_df.columns:
     items_df["brand"] = items_df["styleCode"].apply(brand_from_style_code)
 
 # 시트에서 읽은 값은 문자열이므로 숫자 컬럼 변환
+# 리터칭 완료일 → isShot, 공홈등록일 → isRegistered: 날짜 문자열을 0/1로 변환 (날짜 있으면 1)
+if "isShot" in items_df.columns:
+    shot_parsed = pd.to_datetime(items_df["isShot"], errors="coerce")
+    items_df["isShot"] = shot_parsed.notna().astype(int)
+if "isRegistered" in items_df.columns:
+    reg_parsed = pd.to_datetime(items_df["isRegistered"], errors="coerce")
+    items_df["isRegistered"] = reg_parsed.notna().astype(int)
+
 numeric_cols = [
     "inboundQty", "outboundQty", "stockQty", "salesQty",
     "isShot", "isRegistered", "isOnSale"
@@ -683,13 +714,15 @@ with st.expander("🔍 촬영 열이 X로 나오는 이유 확인"):
         st.write(f"**촬영 판정에 사용 중인 컬럼:** `{shot_date_column}` (여기에 유효한 날짜가 있으면 O)")
     else:
         st.write("**촬영 판정에 사용 중인 컬럼:** 없음 → `isShot`(촬영여부) 값으로 판정 중.")
-        st.caption("시트에서 읽은 컬럼 이름 중에 촬영/리터칭 날짜 컬럼이 있어야 O로 표시됩니다. 아래 목록에서 해당 컬럼 이름을 확인한 뒤, Streamlit Secrets에 **SHOT_DATE_COLUMN** = 그 이름(따옴표 포함)으로 넣으면 해당 컬럼으로 촬영 O/X를 판정합니다.")
-        all_cols = list(items_df.columns)
-        # 촬영/날짜와 연관될 수 있는 이름만 강조해서 보여주기
-        date_like = [c for c in all_cols if any(k in str(c) for k in ("촬영", "리터칭", "보정", "완료", "일자", "날짜", "date", "shot", "retouch"))]
+        st.caption("시트에서 읽은 컬럼 이름 중에 촬영/리터칭 날짜 컬럼이 있어야 O로 표시됩니다. 아래에서 해당 컬럼을 확인한 뒤, 없다면 **헤더가 2행**이면 Secrets에 **HEADER_ROW** = 2 를 넣거나, **SHOT_DATE_COLUMN** = 컬럼이름(정확히)으로 지정하세요.")
+        all_cols = [c for c in items_df.columns if not str(c).startswith("_")]  # __shot_done, _year 제외
+        # '리터칭' 포함 컬럼 전체 검색 (연관 후보에서 내부 컬럼 제외)
+        date_like = [c for c in all_cols if any(k in str(c) for k in ("촬영", "리터칭", "보정", "완료일", "일자", "날짜", "date", "retouch")) and "shot_done" not in str(c).lower()]
         if date_like:
-            st.write("연관 컬럼 후보:", ", ".join(f"`{c}`" for c in date_like))
-        st.write("전체 컬럼:", ", ".join(f"`{c}`" for c in all_cols[:30]) + (" …" if len(all_cols) > 30 else ""))
+            st.write("**리터칭/촬영 관련 컬럼 (전체):**", ", ".join(f"`{c}`" for c in date_like))
+        else:
+            st.warning("'리터칭' 또는 '촬영'이 들어간 컬럼이 시트에서 읽은 목록에 없습니다. → 시트 **2행이 헤더**라면 Secrets에 **HEADER_ROW** = 2 를 넣어 보세요.")
+        st.write("**전체 컬럼 (일부):**", ", ".join(f"`{c}`" for c in all_cols[:35]) + (" …" if len(all_cols) > 35 else ""))
     if debug_style and "styleCode" in items_df.columns:
         rows = items_df[items_df["styleCode"].astype(str).str.strip() == str(debug_style).strip()]
         if len(rows) == 0:
