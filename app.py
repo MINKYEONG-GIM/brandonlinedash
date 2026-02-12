@@ -238,6 +238,7 @@ COLUMN_ALIASES = {
     "판매재고량(입고량-누판량)": "stockQty",
     "리터칭 완료일": "isShot",
     "리터칭완료일": "isShot",
+    "업로드완료일": "isShot",
     "공홈등록일": "isRegistered",
     "공홈 등록일": "isRegistered",
 }
@@ -636,7 +637,16 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
 
             shot_col = _find_photo_date_column(b_df, preferred_name=preferred_shot_date_col)
             if shot_col and shot_col in b_df.columns:
-                b_df["__shot_done"] = _date_cell_to_01(b_df[shot_col])
+                # 클라비스는 업로드완료일 값 존재 여부만 체크
+                if brand_name == "클라비스":
+                    s = b_df[shot_col].astype(str).str.strip()
+                    # 값이 비어있지 않으면 촬영 완료
+                    b_df["__shot_done"] = (
+                        ~s.isin(["", "0", "0.0", "-", ".", "1900-01-00"])
+                    ).astype(int)
+                else:
+                    # 다른 브랜드는 기존 날짜 파싱 로직 유지
+                    b_df["__shot_done"] = _date_cell_to_01(b_df[shot_col])
                 if shot_date_column is None:
                     shot_date_column = f"{sheet_key} 시트 · {shot_col}"
             else:
