@@ -133,6 +133,14 @@ BRAND_CODE_MAP = {
     "cv": "클라비스",
     "nk": "뉴발란스키즈",
 }
+# 브랜드별 촬영·등록 여부 시트 (해당 시트에서만 읽어서 merge)
+BRAND_TO_SHEET = {
+    "스파오": "SP",
+    "미쏘": "MI",
+    "클라비스": "CV",
+    "로엠": "RM",
+    "후아유": "WH",
+}
 
 def brand_from_style_code(style_code):
     """스타일코드 앞 2자리로 브랜드명 반환 (소문자로 매핑)"""
@@ -323,6 +331,17 @@ def _find_photo_date_column(df, preferred_name=None):
         if "완료일" in s_nospace and "등록" not in s_nospace and "판매" not in s_nospace:
             return c
     return None
+
+
+def _find_registration_date_column(df):
+    """등록 여부 판정용 날짜 컬럼. 공홈등록일 우선."""
+    for c in df.columns:
+        raw = str(c).strip()
+        n = _normalize_col_name(c)
+        if "공홈등록" in n or "공홈 등록" in n or "공홈등록일" in n:
+            return c
+    return None
+
 
 def _parse_date_series(ser):
     """다양한 날짜 형식 파싱 (문자열, Excel/구글 시트 일련번호 등). 공백/형식 차이 관대하게 처리."""
@@ -545,48 +564,68 @@ if missing:
     items_df = fill_missing_required_columns(items_df, required_columns)
 
 # ----------------------------
-# 촬영 완료 여부 (__shot_done): BASE가 아니라 SP 시트에서만 읽어서 merge
+# 촬영·등록 여부: 브랜드별 시트(SP/MI/CV/RM/WH)에서만 읽어서 merge. BASE에서는 사용 안 함.
 # ----------------------------
 preferred_shot_date_col = (st.secrets.get("SHOT_DATE_COLUMN") or "").strip() or None
 shot_date_column = None
-sp_spreadsheet_id = spreadsheet_ids.get("SP") if spreadsheet_ids else None
+items_df["__shot_done"] = 0
+if "isRegistered" not in items_df.columns:
+    items_df["isRegistered"] = 0
 
-if sp_spreadsheet_id and gs_client and "styleCode" in items_df.columns:
-    try:
-        sp_df = load_sheet_as_dataframe(
-            gs_client,
-            sp_spreadsheet_id,
-            sheet_name=items_sheet_name.strip() or None,
-            header_row=header_row,
-        )
-        if sp_df is not None and len(sp_df) > 0:
-            sp_df.columns = [str(c).strip() for c in sp_df.columns]
-            date_col = _find_photo_date_column(sp_df, preferred_name=preferred_shot_date_col)
-            if date_col and date_col in sp_df.columns:
-                sp_df["__shot_done"] = _date_cell_to_01(sp_df[date_col])
-                shot_date_column = f"SP 시트 · {date_col}"
-                sc = "styleCode" if "styleCode" in sp_df.columns else ("스타일코드" if "스타일코드" in sp_df.columns else None)
-                if sc:
-                    if sc == "스타일코드":
-                        sp_df["_styleCode"] = sp_df["스타일코드"].astype(str).str.strip()
-                    else:
-                        sp_df["_styleCode"] = sp_df["styleCode"].astype(str).str.strip()
-                    sp_shot_by_style = sp_df.groupby("_styleCode", dropna=False)["__shot_done"].max()
-                    items_df["__shot_done"] = (
-                        items_df["styleCode"].astype(str).str.strip().map(sp_shot_by_style).fillna(0).astype(int)
-                    )
+if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand" in items_df.columns:
+    shot_reg_parts = []
+    for brand_name, sheet_key in BRAND_TO_SHEET.items():
+        sid = spreadsheet_ids.get(sheet_key)
+        if not sid:
+            continue
+        try:
+            b_df = load_sheet_as_dataframe(
+                gs_client,
+                sid,
+                sheet_name=items_sheet_name.strip() or None,
+                header_row=header_row,
+            )
+            if b_df is None or len(b_df) == 0:
+                continue
+            b_df.columns = [str(c).strip() for c in b_df.columns]
+            sc = "styleCode" if "styleCode" in b_df.columns else ("스타일코드" if "스타일코드" in b_df.columns else None)
+            if not sc:
+                continue
+            b_df["_styleCode"] = b_df[sc].astype(str).str.strip()
+            b_df["brand"] = brand_name
+
+            shot_col = _find_photo_date_column(b_df, preferred_name=preferred_shot_date_col)
+            if shot_col and shot_col in b_df.columns:
+                b_df["__shot_done"] = _date_cell_to_01(b_df[shot_col])
+                if shot_date_column is None:
+                    shot_date_column = f"{sheet_key} 시트 · {shot_col}"
             else:
-                items_df["__shot_done"] = 0
-        else:
-            items_df["__shot_done"] = 0
-    except Exception:
-        items_df["__shot_done"] = 0
-else:
-    if not sp_spreadsheet_id:
-        items_df["__shot_done"] = 0
-    else:
-        items_df["__shot_done"] = compute_shot_done_series(items_df, preferred_date_column=preferred_shot_date_col)
-        shot_date_column = _find_photo_date_column(items_df, preferred_name=preferred_shot_date_col)
+                b_df["__shot_done"] = 0
+
+            reg_col = _find_registration_date_column(b_df)
+            if reg_col and reg_col in b_df.columns:
+                b_df["isRegistered"] = _date_cell_to_01(b_df[reg_col])
+            else:
+                b_df["isRegistered"] = 0
+
+            by_style = b_df.groupby("_styleCode", dropna=False).agg({"__shot_done": "max", "isRegistered": "max"}).reset_index()
+            by_style["brand"] = brand_name
+            shot_reg_parts.append(by_style[["brand", "_styleCode", "__shot_done", "isRegistered"]])
+        except Exception:
+            continue
+
+    if shot_reg_parts:
+        shot_reg_df = pd.concat(shot_reg_parts, ignore_index=True)
+        items_df["_styleCode"] = items_df["styleCode"].astype(str).str.strip()
+        merged = items_df[["brand", "_styleCode"]].merge(
+            shot_reg_df,
+            left_on=["brand", "_styleCode"],
+            right_on=["brand", "_styleCode"],
+            how="left",
+        )
+        items_df["__shot_done"] = merged["__shot_done"].fillna(0).astype(int)
+        items_df["isRegistered"] = merged["isRegistered"].fillna(0).astype(int)
+        items_df.drop(columns=["_styleCode"], inplace=True, errors="ignore")
 
 # ----------------------------
 # verdict 생성
