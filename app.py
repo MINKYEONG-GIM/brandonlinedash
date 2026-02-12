@@ -716,7 +716,9 @@ if empty_year.any():
 # ----------------------------
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    brand = st.selectbox("브랜드", sorted(items_df["brand"].unique()))
+    brand_options = sorted(items_df["brand"].unique())
+    default_brand_idx = brand_options.index("스파오") if "스파오" in brand_options else 0
+    brand = st.selectbox("브랜드", brand_options, index=default_brand_idx)
 with col2:
     year = "2026"  # 연도 고정
     st.selectbox("연도", [year], key="year", disabled=True)
