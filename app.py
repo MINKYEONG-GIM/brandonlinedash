@@ -167,6 +167,16 @@ BRAND_TO_SHEET = {
     "후아유": "WH",
 }
 
+def _normalize_style_code_for_merge(val):
+    """merge 시 브랜드 시트·BASE 시트 간 스타일코드 매칭을 위해 동일 형식으로 정규화 (공백 제거, nan 처리)"""
+    if pd.isna(val):
+        return ""
+    s = str(val).strip()
+    if not s or s.lower() == "nan":
+        return ""
+    return "".join(s.split())
+
+
 def brand_from_style_code(style_code):
     """스타일코드 앞 2자리로 브랜드명 반환 (소문자로 매핑)"""
     if pd.isna(style_code) or not str(style_code).strip():
@@ -632,7 +642,7 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
             sc = "styleCode" if "styleCode" in b_df.columns else ("스타일코드" if "스타일코드" in b_df.columns else None)
             if not sc:
                 continue
-            b_df["_styleCode"] = b_df[sc].astype(str).str.strip()
+            b_df["_styleCode"] = b_df[sc].apply(_normalize_style_code_for_merge)
             b_df["brand"] = brand_name
 
             shot_col = _find_photo_date_column(b_df, preferred_name=preferred_shot_date_col)
@@ -666,7 +676,7 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
 
     if shot_reg_parts:
         shot_reg_df = pd.concat(shot_reg_parts, ignore_index=True)
-        items_df["_styleCode"] = items_df["styleCode"].astype(str).str.strip()
+        items_df["_styleCode"] = items_df["styleCode"].apply(_normalize_style_code_for_merge)
         merged = items_df[["brand", "_styleCode"]].merge(
             shot_reg_df,
             left_on=["brand", "_styleCode"],
