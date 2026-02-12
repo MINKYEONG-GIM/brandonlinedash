@@ -165,6 +165,9 @@ BRAND_TO_SHEET = {
     "클라비스": "CV",
     "로엠": "RM",
     "후아유": "WH",
+    "슈펜": "HP",  
+    "에블린": "EB", 
+    "뉴발란스키즈": "NK"
 }
 
 def _normalize_style_code_for_merge(val):
@@ -486,6 +489,8 @@ SPREADSHEET_OPTIONS = {
     "WH_SPREADSHEET_ID": "WH",
     "RM_SPREADSHEET_ID": "RM",
     "EB_SPREADSHEET_ID": "EB",
+    "HP_SPREADSHEET_ID": "HP",
+    "NK_SPREADSHEET_ID": "NK"
 }
 
 def get_spreadsheet_ids_from_secrets():
