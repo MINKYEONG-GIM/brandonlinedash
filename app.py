@@ -123,3 +123,11 @@ intersection = set(base_styles) & set(cv_styles)
 st.write("교집합 개수:", len(intersection))
 st.write("교집합 샘플:", list(intersection)[:10])
 
+
+check = items_df[
+    items_df["_styleCode"] == "CVJLG1101M"
+][["_styleCode", "__shot_done"]]
+
+st.write(check)
+
+
