@@ -508,12 +508,22 @@ if "styleCode" in items_df.columns:
 
 # 시트에서 읽은 값은 문자열이므로 숫자 컬럼 변환
 # 리터칭 완료일 → isShot, 공홈등록일 → isRegistered: 날짜 문자열을 0/1로 변환 (날짜 있으면 1)
+# 시트에 미완료일 때 '0' 넣는 경우가 있으므로 0/'0'은 무조건 '날짜 없음'(0)으로 처리. 구글 시트 날짜(엑셀 시리얼)도 인식
+def _date_cell_to_01(ser):
+    s = ser.astype(str).str.strip()
+    num = pd.to_numeric(ser, errors="coerce")
+    no_date = s.isin(("", "0", "0.0", "-", ".")) | (num == 0)
+    parsed = pd.to_datetime(ser, errors="coerce")
+    # 숫자만 있는데 10000~1000000 구간이면 엑셀/구글 시트 날짜 시리얼 → 유효한 날짜로 간주
+    excel_date = num.notna() & (num > 10000) & (num < 1000000)
+    if excel_date.any():
+        parsed = parsed.fillna(pd.to_datetime(num[excel_date], unit="D", origin="1899-12-30"))
+    return (parsed.notna() & ~no_date).astype(int)
+
 if "isShot" in items_df.columns:
-    shot_parsed = pd.to_datetime(items_df["isShot"], errors="coerce")
-    items_df["isShot"] = shot_parsed.notna().astype(int)
+    items_df["isShot"] = _date_cell_to_01(items_df["isShot"])
 if "isRegistered" in items_df.columns:
-    reg_parsed = pd.to_datetime(items_df["isRegistered"], errors="coerce")
-    items_df["isRegistered"] = reg_parsed.notna().astype(int)
+    items_df["isRegistered"] = _date_cell_to_01(items_df["isRegistered"])
 
 numeric_cols = [
     "inboundQty", "outboundQty", "stockQty", "salesQty",
