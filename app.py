@@ -620,8 +620,6 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
                 
                 if shot_date_column is None:
                     shot_date_column = f"{sheet_key} 시트 · {shot_col}"
-            else:
-                b_df["__shot_done"] = 0
 
             reg_col = _find_registration_date_column(b_df)
             if reg_col and reg_col in b_df.columns:
