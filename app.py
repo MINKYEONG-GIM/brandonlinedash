@@ -5,15 +5,18 @@ import unicodedata
 
 
 
-st.set_page_config(page_title="(상품 상세) 흐름 대시보드", layout="wide")
+st.set_page_config(page_title="(테스트) 대시보드", layout="wide")
 
-
+# ----------------------------
 # Google Sheets 연동
+# ----------------------------
 def get_gsheet_client(credentials_dict):
     if credentials_dict is None:
         return None
     import gspread
     from google.oauth2.service_account import Credentials
+    # 스프레드시트/워크시트를 "생성"까지 하려면 readonly 권한으로는 불가능합니다.
+    # 읽기만 해도 아래 scope는 동작하며, 생성/추가 시트 등도 지원합니다.
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
@@ -25,6 +28,7 @@ def get_gsheet_client(credentials_dict):
 
 
 def _normalize_spreadsheet_id(spreadsheet_id_or_url):
+    """스프레드시트 ID 또는 URL을 받아 ID로 정규화."""
     import re
 
     if spreadsheet_id_or_url is None:
@@ -288,10 +292,10 @@ def fill_missing_required_columns(df, required_columns):
                 df[col] = ""
     return df
 
-
+# ----------------------------
 # 단계상태 판정 (단일 컬럼, flow와 무관)
 # - 가장 앞 단계에서 멈춘 곳 하나만 표시
-
+# ----------------------------
 def compute_status(row):
     if row["inboundQty"] == 0:
         return "미입고"
@@ -321,9 +325,9 @@ FLOW_SORT_ORDER = {
     "등록": ["미등록", "미입고", "미출고", "미촬영", "판매개시"],
 }
 
-
+# ----------------------------
 # 촬영 완료 판정: 리터칭완료일·업로드완료일 등 날짜 컬럼
-
+# ----------------------------
 # 규칙: "리터칭완료일" 또는 "업로드완료일" 열에 날짜 값이 있으면 그 행은 촬영 O. (클라비스는 업로드완료일 사용)
 
 def _normalize_col_name(name):
@@ -441,9 +445,9 @@ def compute_shot_done_series(df, preferred_date_column=None):
 
     return pd.Series([0] * len(df), index=df.index, dtype="int64")
 
-
+# ----------------------------
 # 스냅샷 증감 계산
-
+# ----------------------------
 def compute_flow_deltas(df):
     if len(df) < 2:
         return None
@@ -457,15 +461,15 @@ def compute_flow_deltas(df):
         "판매개시": this_week["onSaleDone"] - last_week["onSaleDone"],
     }
 
-
+# ----------------------------
 # 제목
-
+# ----------------------------
 st.title("브랜드 상품 흐름 대시보드")
 st.caption("입고 · 출고 · 촬영 · 등록 · 판매개시 현황")
 
-
+# ----------------------------
 # Google Sheets 연결 (Secrets만 사용, UI 없음)
-
+# ----------------------------
 SPREADSHEET_OPTIONS = {
     "BASE_SPREADSHEET_ID": "BASE",
     "SP_SPREADSHEET_ID": "SP",
@@ -604,9 +608,9 @@ missing = [col for col in required_columns if col not in items_df.columns]
 if missing:
     items_df = fill_missing_required_columns(items_df, required_columns)
 
-
+# ----------------------------
 # 촬영·등록 여부: 브랜드별 시트(SP/MI/CV/RM/WH)에서만 읽어서 merge. BASE에서는 사용 안 함.
-
+# ----------------------------
 preferred_shot_date_col = (st.secrets.get("SHOT_DATE_COLUMN") or "").strip() or None
 shot_date_column = None
 items_df["__shot_done"] = 0
@@ -675,9 +679,9 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
         items_df["isRegistered"] = merged["isRegistered"].fillna(0).astype(int)
         items_df.drop(columns=["_styleCode"], inplace=True, errors="ignore")
 
-
-# 단계상태 생성
-
+# ----------------------------
+# 단계상태 생성 (모든 스타일코드는 하나의 상태만 가짐)
+# ----------------------------
 items_df["단계상태"] = items_df.apply(compute_status, axis=1)
 
 # 연도·시즌: 스타일코드 5번째(연도)·6번째(시즌) 자리로 파악. 예: sp23g1fh28 → 2026년, 1시즌 → 20261 시즌 상품
@@ -690,9 +694,9 @@ empty_year = items_df["_year"] == ""
 if empty_year.any():
     items_df.loc[empty_year, "_year"] = items_df.loc[empty_year, "yearSeason"].astype(str).str[:4]
 
-
+# ----------------------------
 # 필터 영역
-
+# ----------------------------
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     brand_options = sorted(items_df["brand"].unique())
@@ -742,9 +746,22 @@ if total_n == 0:
     st.info("선택한 조건에 맞는 데이터가 없습니다.")
     st.stop()
 
+# 스냅샷 증감 (카드에 함께 표시용)
+deltas = None
+if snapshots_sheet_name and snapshots_sheet_name.strip():
+    snapshots_df = load_sheet_as_dataframe(
+        gs_client, spreadsheet_id, sheet_name=snapshots_sheet_name.strip()
+    )
+    if snapshots_df is not None and len(snapshots_df) >= 2:
+        snap_cols = ["inboundDone", "outboundDone", "shotDone", "registeredDone", "onSaleDone"]
+        for c in snap_cols:
+            if c in snapshots_df.columns:
+                snapshots_df[c] = pd.to_numeric(snapshots_df[c], errors="coerce").fillna(0).astype(int)
+        deltas = compute_flow_deltas(snapshots_df)
 
+# ----------------------------
 # 흐름 집계 카드 (스타일 수 기준: 해당 단계 1건이라도 있으면 스타일 포함)
-
+# ----------------------------
 flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
 # 흐름별 조건: 해당 조건을 만족하는 행이 하나라도 있는 스타일 수
 _flow_conditions = {
@@ -826,9 +843,9 @@ flow_df = flow_df.sort_values(by=["_정렬키", "styleCode"], ascending=[True, T
 flow_df["_촬영"] = flow_df["__shot_done"].map(lambda x: "O" if (pd.notna(x) and int(x) == 1) else "X")
 flow_df["_등록"] = flow_df["isRegistered"].map(lambda x: "O" if (pd.notna(x) and x == 1) else "X")
 
-
+# ----------------------------
 # 상세 테이블 (NO, 스타일코드, 상품명, 컬러, 입고/출고/재고, 촬영, 등록, 상태) — 판매 열 제거
-
+# ----------------------------
 st.subheader(f"상세 현황 · {selected_flow}")
 
 display_df = flow_df.copy()
@@ -862,3 +879,44 @@ st.download_button(
     file_name=f"상세현황_{selected_flow}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
+
+
+import pandas as pd
+
+# 예시 데이터
+data = {
+    "스타일코드": ["MIABGG101G"],
+    "공홈 등록일": ["2025-11-17"]  # 실제 값
+}
+df = pd.DataFrame(data)
+
+# 원본 타입 확인
+df["공홈 등록일 타입"] = df["공홈 등록일"].apply(lambda x: type(x))
+print("원본 타입 확인:")
+print(df[["스타일코드", "공홈 등록일", "공홈 등록일 타입"]])
+
+# datetime으로 변환 시도
+df["공홈 등록일_dt"] = pd.to_datetime(df["공홈 등록일"], errors="coerce")
+df["등록일 변환 성공 여부"] = df["공홈 등록일_dt"].notna()
+print("\n변환 후 확인:")
+print(df[["스타일코드", "공홈 등록일_dt", "등록일 변환 성공 여부"]])
+
+
+import streamlit as st
+import pandas as pd
+
+style_to_check = "MIABGG101G"
+
+if "styleCode" in items_df.columns and "isRegistered" in items_df.columns:
+    row = items_df[items_df["styleCode"] == style_to_check]
+    if not row.empty:
+        raw_val = row.iloc[0]["공홈등록일"] if "공홈등록일" in row.columns else None
+        parsed_val = _parse_date_series(pd.Series([raw_val])).iloc[0] if raw_val is not None else None
+
+        st.write(f"스타일코드: {style_to_check}")
+        st.write(f"원본 등록일 값: {raw_val} (type: {type(raw_val)})")
+        st.write(f"파싱 결과: {parsed_val} (type: {type(parsed_val)})")
+        st.write(f"isRegistered 값: {row.iloc[0]['isRegistered']}")
+    else:
+        st.write(f"{style_to_check} 해당하는 행 없음")
