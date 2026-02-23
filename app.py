@@ -247,6 +247,14 @@ COLUMN_ALIASES = {
     "판매수량": "salesQty",
     "누적입고량(물류+입고조정+브랜드간)": "inboundQty",
     "출고량[출고-반품](매장+고객+샘플+브랜드간)": "outboundQty",
+    "최초입고일": "firstInDate",
+    "입고일": "firstInDate",
+    "누적입고액": "inAmount",
+    "입고액": "inAmount",
+    "출고액": "outAmount",
+    "누적판매액": "saleAmount",
+    "판매액": "saleAmount",
+    "누적 판매액[외형매출]": "saleAmount",
     "누적 판매량": "salesQty",
     "판매재고량(입고량-누판량)": "stockQty",
     "리터칭 완료일": "isShot",
@@ -297,9 +305,10 @@ def fill_missing_required_columns(df, required_columns):
 # - 가장 앞 단계에서 멈춘 곳 하나만 표시
 # ----------------------------
 def compute_status(row):
-    if row["inboundQty"] == 0:
+    """참조(온/오프 입출고 현황)와 동일: 입고=최초입고일|입고량|입고액, 출고=출고액/출고량."""
+    if not row.get("_입고", True):
         return "미입고"
-    if row["outboundQty"] == 0:
+    if not row.get("_출고", True):
         return "미출고"
     if row["__shot_done"] == 0:
         return "미촬영"
@@ -607,6 +616,28 @@ required_columns = [
 missing = [col for col in required_columns if col not in items_df.columns]
 if missing:
     items_df = fill_missing_required_columns(items_df, required_columns)
+
+# ----------------------------
+# 입고/출고/판매 판정 (참조: 온/오프 전체 입출고 현황과 동일)
+# 입고 = 최초입고일 유효 OR 입고량>0 OR 누적입고액>0 / 출고 = 출고액>0(또는 출고량>0) / 판매 = 누적판매액>0(또는 판매량/판매개시)
+# ----------------------------
+if "firstInDate" in items_df.columns:
+    items_df["firstInDate"] = _date_cell_to_01(items_df["firstInDate"])
+else:
+    items_df["firstInDate"] = 0
+for col, default in [("inAmount", 0), ("outAmount", 0), ("saleAmount", 0)]:
+    if col not in items_df.columns:
+        items_df[col] = default
+    else:
+        items_df[col] = pd.to_numeric(items_df[col], errors="coerce").fillna(0)
+in_date_ok = (items_df["firstInDate"] == 1)
+has_qty = (pd.to_numeric(items_df["inboundQty"], errors="coerce").fillna(0) > 0)
+has_amt = (pd.to_numeric(items_df["inAmount"], errors="coerce").fillna(0) > 0)
+items_df["_입고"] = in_date_ok | has_qty | has_amt
+out_amt = pd.to_numeric(items_df["outAmount"], errors="coerce").fillna(0)
+items_df["_출고"] = (out_amt > 0) | (pd.to_numeric(items_df["outboundQty"], errors="coerce").fillna(0) > 0)
+sale_amt = pd.to_numeric(items_df["saleAmount"], errors="coerce").fillna(0)
+items_df["_판매"] = (sale_amt > 0) | (pd.to_numeric(items_df["salesQty"], errors="coerce").fillna(0) > 0) | (pd.to_numeric(items_df["isOnSale"], errors="coerce").fillna(0) == 1)
 
 # ----------------------------
 # 촬영·등록 여부: 브랜드별 시트(SP/MI/CV/RM/WH)에서만 읽어서 merge. BASE에서는 사용 안 함.
