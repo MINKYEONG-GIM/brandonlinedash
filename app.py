@@ -684,12 +684,8 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
 
 items_df["단계상태"] = items_df.apply(compute_status, axis=1)
 
-# 연도·시즌: 스타일코드에서 파악. 미쏘만 6번째=연도·7번째=시즌, 그 외 5번째=연도·6번째=시즌. 예: sp23g1fh28 → 2026년, 1시즌 → 20261 시즌 상품
+# 연도·시즌: 시즌은 항상 시즌(Now) 열에서 사용(ensure_year_season_from_columns에서 년도(Now)+시즌(Now)로 이미 채움). 연도(_year)만 스타일코드에서 보조 사용.
 items_df["_year"] = items_df.apply(lambda row: year_from_style_code(row["styleCode"], row["brand"]), axis=1)
-_ys_from_style = items_df.apply(lambda row: year_season_from_style_code(row["styleCode"], row["brand"])[0], axis=1)
-if (_ys_from_style != "").any():
-    items_df["yearSeason"] = items_df["yearSeason"].astype(str)
-    items_df.loc[_ys_from_style != "", "yearSeason"] = _ys_from_style[_ys_from_style != ""]
 empty_year = items_df["_year"] == ""
 if empty_year.any():
     items_df.loc[empty_year, "_year"] = items_df.loc[empty_year, "yearSeason"].astype(str).str[:4]
