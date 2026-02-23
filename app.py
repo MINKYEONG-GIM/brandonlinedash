@@ -772,22 +772,9 @@ if total_n == 0:
     st.info("선택한 조건에 맞는 데이터가 없습니다.")
     st.stop()
 
-# 스냅샷 증감 (카드에 함께 표시용)
-deltas = None
-if snapshots_sheet_name and snapshots_sheet_name.strip():
-    snapshots_df = load_sheet_as_dataframe(
-        gs_client, spreadsheet_id, sheet_name=snapshots_sheet_name.strip()
-    )
-    if snapshots_df is not None and len(snapshots_df) >= 2:
-        snap_cols = ["inboundDone", "outboundDone", "shotDone", "registeredDone", "onSaleDone"]
-        for c in snap_cols:
-            if c in snapshots_df.columns:
-                snapshots_df[c] = pd.to_numeric(snapshots_df[c], errors="coerce").fillna(0).astype(int)
-        deltas = compute_flow_deltas(snapshots_df)
 
-# ----------------------------
-# 흐름 집계 카드 (스타일 수 기준: 해당 단계 1건이라도 있으면 스타일 포함)
-# ----------------------------
+# 흐름 집계 카드 (해당 단계 1건이라도 있으면 포함)
+
 flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
 # 흐름별 조건: 해당 조건을 만족하는 행이 하나라도 있는 스타일 수
 _flow_conditions = {
@@ -868,10 +855,10 @@ flow_df = flow_df.sort_values(by=["_정렬키", "styleCode"], ascending=[True, T
 flow_df["_촬영"] = flow_df["__shot_done"].map(lambda x: "O" if (pd.notna(x) and int(x) == 1) else "X")
 flow_df["_등록"] = flow_df["isRegistered"].map(lambda x: "O" if (pd.notna(x) and x == 1) else "X")
 
-# ----------------------------
-# 상세 테이블 (NO, 스타일코드, 상품명, 컬러, 입고/출고/재고, 촬영, 등록, 상태) — 판매 열 제거
-# ----------------------------
-st.subheader(f"상세 현황 · {selected_flow}")
+
+# 상세 테이블 
+
+st.subheader(f"{selected_flow} 현황 - 미진행된 건부터 노출됩니다.")
 
 display_df = flow_df.copy()
 display_df.insert(0, "NO", range(1, len(display_df) + 1))
