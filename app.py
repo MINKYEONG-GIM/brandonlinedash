@@ -728,7 +728,7 @@ flow_counts = pd.Series({
     for flow, cond in _flow_conditions.items()
 })
 
-# 흐름별 증감(delta) - 이전 기간 대비 비교용 (데이터 소스 있으면 여기서 계산 후 dict로 할당)
+# 흐름별 증감(delta) - 이전 기간 대비 비교용
 deltas = None
 
 if "selected_flow" not in st.session_state:
@@ -797,7 +797,7 @@ flow_df["_등록"] = flow_df["isRegistered"].map(lambda x: "O" if (pd.notna(x) a
 
 # 상세 테이블
 
-st.subheader(f"상세 현황 · {selected_flow}")
+st.subheader(f"{selected_flow}의 상세현황")
 
 display_df = flow_df.copy()
 display_df.insert(0, "NO", range(1, len(display_df) + 1))
