@@ -5,7 +5,7 @@ import unicodedata
 
 
 
-st.set_page_config(page_title="브랜드 상품 흐름 대시보드", layout="wide")
+st.set_page_config(page_title="(브랜드 상세) 상품흐름 대시보드", layout="wide")
 
 # ----------------------------
 # Google Sheets 연동
@@ -70,9 +70,8 @@ def open_or_create_spreadsheet(client, spreadsheet_id=None, spreadsheet_title=No
         return client.create(title)
 
 
-@st.cache_data(ttl=90)
+@st.cache_data(ttl=300)
 def _cached_load_sheet(spreadsheet_id: str, sheet_name: str, header_row: int):
-    """시트 읽기 결과를 90초 캐시하여 API 429(Quota exceeded) 완화."""
     if not spreadsheet_id or not str(spreadsheet_id).strip():
         return None
     try:
@@ -156,7 +155,7 @@ BRAND_CODE_MAP = {
     "eb": "에블린",
     "hp": "슈펜",
     "cv": "클라비스",
-    "nk": "뉴발란스키즈",
+    "nk": "뉴발란스키즈"
 }
 # 브랜드별 촬영·등록 여부 시트 (해당 시트에서만 읽어서 merge)
 BRAND_TO_SHEET = {
@@ -167,7 +166,8 @@ BRAND_TO_SHEET = {
     "후아유": "WH",
     "슈펜": "HP",  
     "에블린": "EB", 
-    "뉴발란스키즈": "NK"
+    "뉴발란스키즈": "NK",
+    "뉴발란스": "NB"
 }
 
 def _normalize_style_code_for_merge(val):
@@ -293,20 +293,37 @@ def fill_missing_required_columns(df, required_columns):
     return df
 
 # ----------------------------
-# 상태 판정 로직
+# 단계상태 판정 (단일 컬럼, flow와 무관)
+# - 가장 앞 단계에서 멈춘 곳 하나만 표시
 # ----------------------------
-def get_verdict(inbound, outbound, is_shot, is_registered, is_on_sale):
-    if inbound > 0 and outbound == 0:
-        return "입고"
-    if outbound > 0 and is_shot == 0:
-        return "출고"
-    if is_shot == 1 and is_registered == 0:
-        return "촬영"
-    if is_registered == 1 and is_on_sale == 0:
-        return "등록"
-    if is_on_sale == 1:
-        return "판매개시"
-    return "대기"
+def compute_status(row):
+    if row["inboundQty"] == 0:
+        return "미입고"
+    if row["outboundQty"] == 0:
+        return "미출고"
+    if row["__shot_done"] == 0:
+        return "미촬영"
+    if row["isRegistered"] == 0:
+        return "미등록"
+    return "판매개시"
+
+
+# 기본 화면 정렬 순서
+BASE_SORT_ORDER = {
+    "미입고": 0,
+    "미출고": 1,
+    "미촬영": 2,
+    "미등록": 3,
+    "판매개시": 4,
+}
+
+# 버튼 클릭 시: 해당 단계가 안 된 스타일을 제일 위로
+FLOW_SORT_ORDER = {
+    "입고": ["미입고", "미출고", "미촬영", "미등록", "판매개시"],
+    "출고": ["미출고", "미입고", "미촬영", "미등록", "판매개시"],
+    "촬영": ["미촬영", "미입고", "미출고", "미등록", "판매개시"],
+    "등록": ["미등록", "미입고", "미출고", "미촬영", "판매개시"],
+}
 
 # ----------------------------
 # 촬영 완료 판정: 리터칭완료일·업로드완료일 등 날짜 컬럼
@@ -342,37 +359,9 @@ def _find_photo_date_column(df, preferred_name=None):
         raw = str(c)
         if "리터칭" in raw or "retouch" in raw.lower():
             return c
-    # 2순위: 업로드완료일 (클라비스 등 해당 시트에서 사용)
-    for c in df.columns:
-        raw = str(c)
-        if "업로드완료일" in raw or _normalize_col_name(c) == "업로드완료일":
-            return c
-    # 3순위: 머릿글 "리터칭완료일" 정확히 (공백/제어문자만 정규화)
+    # 2순위: 머릿글 "리터칭완료일" 정확히 (공백/제어문자만 정규화)
     for c in df.columns:
         if _normalize_col_name(c) == "리터칭완료일":
-            return c
-    # 4순위: 리터칭 관련 (정규화 후 포함 여부)
-    for c in df.columns:
-        s_nospace = _normalize_col_name(c)
-        if "리터칭" in s_nospace:
-            return c
-    # 5순위: 촬영일자, 포토촬영일, 보정완료일 등
-    for c in df.columns:
-        s = str(c).strip()
-        s_nospace = _normalize_col_name(c)
-        s_lower = s.lower()
-        if (
-            "포토촬영" in s_nospace
-            or "촬영일" in s_nospace
-            or "촬영일자" in s_nospace
-            or "보정완료" in s_nospace
-            or s in ("photoShotDate", "shotDate", "retouchDoneDate", "retouch_date", "촬영일자", "촬영 일자")
-        ):
-            return c
-    # 6순위: 'OO완료일' 형태 중 등록/판매 제외
-    for c in df.columns:
-        s_nospace = _normalize_col_name(c)
-        if "완료일" in s_nospace and "등록" not in s_nospace and "판매" not in s_nospace:
             return c
     return None
 
@@ -653,15 +642,13 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
             shot_col = _find_photo_date_column(b_df, preferred_name=preferred_shot_date_col)
             if shot_col and shot_col in b_df.columns:
                 # 클라비스는 업로드완료일 값 존재 여부만 체크
-                if brand_name == "클라비스":
-                    s = b_df[shot_col].astype(str).str.strip()
-                    # 값이 비어있지 않으면 촬영 완료
-                    b_df["__shot_done"] = (
-                        ~s.isin(["", "0", "0.0", "-", ".", "1900-01-00"])
-                    ).astype(int)
-                else:
-                    # 다른 브랜드는 기존 날짜 파싱 로직 유지
+                if shot_col and shot_col in b_df.columns:
                     b_df["__shot_done"] = _date_cell_to_01(b_df[shot_col])
+                    if shot_date_column is None:
+                        shot_date_column = f"{sheet_key} 시트 · {shot_col}"
+                else:
+                    b_df["__shot_done"] = 0
+            
                 if shot_date_column is None:
                     shot_date_column = f"{sheet_key} 시트 · {shot_col}"
             else:
@@ -693,18 +680,9 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
         items_df.drop(columns=["_styleCode"], inplace=True, errors="ignore")
 
 # ----------------------------
-# verdict 생성
+# 단계상태 생성 (모든 스타일코드는 하나의 상태만 가짐)
 # ----------------------------
-items_df["verdict"] = items_df.apply(
-    lambda r: get_verdict(
-        r["inboundQty"],
-        r["outboundQty"],
-        r["__shot_done"],
-        r["isRegistered"],
-        r["isOnSale"],
-    ),
-    axis=1,
-)
+items_df["단계상태"] = items_df.apply(compute_status, axis=1)
 
 # 연도·시즌: 스타일코드 5번째(연도)·6번째(시즌) 자리로 파악. 예: sp23g1fh28 → 2026년, 1시즌 → 20261 시즌 상품
 items_df["_year"] = items_df["styleCode"].apply(year_from_style_code)
@@ -759,7 +737,7 @@ else:
 if search:
     filtered_df = filtered_df[
         filtered_df["styleCode"].astype(str).str.contains(search, case=False, na=False)
-        | filtered_df["verdict"].str.contains(search, case=False, na=False)
+        | filtered_df["단계상태"].astype(str).str.contains(search, case=False, na=False)
     ]
 
 # 발주 스타일 수(고유 styleCode), 입고/출고 등은 스타일 수로 집계
@@ -791,7 +769,11 @@ _flow_conditions = {
     "출고": (filtered_df["outboundQty"] > 0),
     "촬영": (filtered_df["__shot_done"] == 1),
     "등록": (filtered_df["isRegistered"] == 1),
-    "판매개시": (filtered_df["isOnSale"] == 1) | (filtered_df["isRegistered"] == 1),
+    "판매개시": (
+        (pd.to_numeric(filtered_df["salesQty"], errors="coerce").fillna(0) > 0)
+        | (filtered_df["isOnSale"] == 1)
+        | (filtered_df["isRegistered"] == 1)
+    ),
 }
 flow_counts = pd.Series({
     flow: filtered_df.loc[cond]["styleCode"].nunique()
@@ -801,35 +783,33 @@ flow_counts = pd.Series({
 if "selected_flow" not in st.session_state:
     st.session_state.selected_flow = flow_types[0]
 
-card_cols = st.columns(len(flow_types) + 1)
+cols = st.columns(len(flow_types))
 for i, flow in enumerate(flow_types):
+    is_selected = st.session_state.selected_flow == flow
     count = int(flow_counts.get(flow, 0))
     delta_val = deltas.get(flow, 0) if deltas else None
     delta_str = f"▲{delta_val}" if (delta_val is not None and delta_val > 0) else (str(delta_val) if delta_val is not None else "")
-    with card_cols[i]:
+    with cols[i]:
         btn_label = f"{flow}\n{count}/{total_n}"
         if delta_str:
             btn_label += f"  {delta_str}"
-        if st.button(btn_label, key=f"flow_btn_{flow}", use_container_width=True):
-            st.session_state.selected_flow = flow
-        if st.session_state.selected_flow == flow:
-            st.caption("✓ 선택됨")
-
-with card_cols[-1]:
-    view_mode = st.radio(
-        "보기 단위",
-        ["스타일", "단품"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="view_mode",
-    )
+        if st.button(
+            btn_label,
+            type="primary" if is_selected else "secondary",
+            use_container_width=True,
+            key=f"flow_{flow}",
+        ):
+            if st.session_state.selected_flow != flow:
+                st.session_state.selected_flow = flow
+                st.rerun()
 
 selected_flow = st.session_state.selected_flow
 
-flow_df = filtered_df.loc[_flow_conditions[selected_flow]].copy()
+# 상세 테이블: 필터된 전체 스타일 사용 (선택한 flow 조건으로만 자르지 않음)
+flow_df = filtered_df.copy()
 
 # 스타일 단위: styleCode 기준 집계 (수량 합산, 촬영/등록/판매개시는 하나라도 1이면 1)
-if view_mode == "스타일" and len(flow_df) > 0:
+if len(flow_df) > 0:
     group_cols = ["brand", "yearSeason", "styleCode"]
     agg_dict = {
         "inboundQty": "sum",
@@ -847,24 +827,30 @@ if view_mode == "스타일" and len(flow_df) > 0:
         agg_dict["colorName"] = lambda s: " / ".join(s.dropna().astype(str).unique()[:5])
     flow_df = flow_df.groupby(group_cols, dropna=False).agg(agg_dict).reset_index()
 
-flow_df["verdict"] = selected_flow
+flow_df["단계상태"] = flow_df.apply(compute_status, axis=1)
+flow_df["상태"] = flow_df["단계상태"]
 
-# 표시용 컬럼: 촬영 O/X, 등록 O/X, 판매 상태
-flow_df["_촬영"] = flow_df["__shot_done"].map(lambda x: "O" if int(x) == 1 else "X")
-flow_df["_등록"] = flow_df["isRegistered"].map(lambda x: "O" if x == 1 else "X")
-flow_df["_판매"] = flow_df.apply(
-    lambda r: "판매개시" if r["isOnSale"] == 1 else ("출고전" if r["outboundQty"] == 0 else "출고"),
-    axis=1,
+# 버튼별 정렬: 해당 단계가 안 된 스타일을 먼저
+order_list = FLOW_SORT_ORDER.get(
+    selected_flow,
+    list(BASE_SORT_ORDER.keys()),
 )
+order_map = {status: idx for idx, status in enumerate(order_list)}
+flow_df["_정렬키"] = flow_df["단계상태"].map(order_map).fillna(99)
+flow_df = flow_df.sort_values(by=["_정렬키", "styleCode"], ascending=[True, True])
+
+# 표시용 컬럼: 촬영 O/X, 등록 O/X (판매 열 제거)
+flow_df["_촬영"] = flow_df["__shot_done"].map(lambda x: "O" if (pd.notna(x) and int(x) == 1) else "X")
+flow_df["_등록"] = flow_df["isRegistered"].map(lambda x: "O" if (pd.notna(x) and x == 1) else "X")
 
 # ----------------------------
-# 상세 테이블 (NO, 스타일코드, 상품명, 컬러, 입고/출고/재고/판매량, 촬영, 등록, 판매)
+# 상세 테이블 (NO, 스타일코드, 상품명, 컬러, 입고/출고/재고, 촬영, 등록, 상태) — 판매 열 제거
 # ----------------------------
 st.subheader(f"상세 현황 · {selected_flow}")
 
 display_df = flow_df.copy()
 display_df.insert(0, "NO", range(1, len(display_df) + 1))
-show_cols = ["NO", "styleCode", "productName", "colorName", "inboundQty", "outboundQty", "stockQty", "salesQty", "_촬영", "_등록", "_판매"]
+show_cols = ["NO", "styleCode", "productName", "inboundQty", "outboundQty", "stockQty", "_촬영", "_등록", "상태"]
 show_cols = [c for c in show_cols if c in display_df.columns]
 display_df = display_df[show_cols]
 display_df = display_df.rename(columns={
@@ -874,17 +860,15 @@ display_df = display_df.rename(columns={
     "inboundQty": "입고량",
     "outboundQty": "출고량",
     "stockQty": "재고량",
-    "salesQty": "판매량",
     "_촬영": "촬영",
     "_등록": "등록",
-    "_판매": "판매",
 })
 
 st.dataframe(display_df, use_container_width=True, hide_index=True)
 
 def to_excel(df):
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+    with pd.ExcelWriter(output) as writer:
         df.to_excel(writer, index=False, sheet_name="상세현황")
     return output.getvalue()
 
@@ -895,36 +879,3 @@ st.download_button(
     file_name=f"상세현황_{selected_flow}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
-
-# ----------------------------
-# 촬영 O/X 원인 확인 (디버그)
-# ----------------------------
-with st.expander("🔍 촬영 열이 X로 나오는 이유 확인"):
-    st.caption("특정 스타일코드가 촬영 O가 아니라 X로 나올 때, 어떤 컬럼·값으로 판정했는지 확인합니다.")
-    debug_style = st.text_input("스타일코드", value="SPABGA9A51", key="debug_style")
-    if shot_date_column:
-        st.write(f"**촬영 판정에 사용 중인 컬럼:** `{shot_date_column}` (여기에 유효한 날짜가 있으면 O)")
-    else:
-        st.write("**촬영 판정에 사용 중인 컬럼:** 없음 → `isShot`(촬영여부) 값으로 판정 중.")
-        st.caption("시트에서 읽은 컬럼 이름 중에 촬영/리터칭/업로드완료 날짜 컬럼(리터칭완료일 또는 업로드완료일 등)이 있어야 O로 표시됩니다. 아래에서 해당 컬럼을 확인한 뒤, 없다면 **헤더가 2행**이면 Secrets에 **HEADER_ROW** = 2 를 넣거나, **SHOT_DATE_COLUMN** = 컬럼이름(정확히)으로 지정하세요.")
-        all_cols = [c for c in items_df.columns if not str(c).startswith("_")]  # __shot_done, _year 제외
-        # '리터칭' 포함 컬럼 전체 검색 (연관 후보에서 내부 컬럼 제외)
-        date_like = [c for c in all_cols if any(k in str(c) for k in ("촬영", "리터칭", "업로드", "보정", "완료일", "일자", "날짜", "date", "retouch")) and "shot_done" not in str(c).lower()]
-        if date_like:
-            st.write("**리터칭/촬영 관련 컬럼 (전체):**", ", ".join(f"`{c}`" for c in date_like))
-        else:
-            st.warning("'리터칭' 또는 '촬영'이 들어간 컬럼이 시트에서 읽은 목록에 없습니다. → 시트 **2행이 헤더**라면 Secrets에 **HEADER_ROW** = 2 를 넣어 보세요.")
-        st.write("**전체 컬럼 (일부):**", ", ".join(f"`{c}`" for c in all_cols[:35]) + (" …" if len(all_cols) > 35 else ""))
-    if debug_style and "styleCode" in items_df.columns:
-        rows = items_df[items_df["styleCode"].astype(str).str.strip() == str(debug_style).strip()]
-        if len(rows) == 0:
-            st.warning(f"스타일코드 '{debug_style}'에 해당하는 행이 없습니다. (필터 조건이나 시트 데이터 확인)")
-        else:
-            cols_show = ["styleCode", "__shot_done"]
-            if shot_date_column and shot_date_column in items_df.columns:
-                cols_show.insert(1, shot_date_column)
-            cols_show = [c for c in cols_show if c in rows.columns]
-            debug_df = rows[cols_show].copy()
-            debug_df["촬영 표시"] = debug_df["__shot_done"].map(lambda x: "O" if int(x) == 1 else "X")
-            st.dataframe(debug_df, use_container_width=True, hide_index=True)
-            st.caption("위 표에서 **촬영 표시가 X**인 이유: 해당 행의 날짜 컬럼 값이 비어 있거나, 날짜로 인식되지 않았거나, '날짜처럼 보이는 값' 조건에 맞지 않음.")
