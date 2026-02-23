@@ -285,7 +285,31 @@ def apply_column_aliases(df):
             # 이미 있는 컬럼으로 덮어쓰지 않음 (예: yearSeason은 년도+시즌으로 이미 채움)
             if target not in df.columns or col == target:
                 rename[col] = target
-    return df.rename(columns=rename) if rename else df
+    df = df.rename(columns=rename) if rename else df
+    # 참조와 동일: 키워드로 입고/출고/판매 관련 컬럼 찾기 (정확한 별칭 없을 때)
+    def find_col_by_keys(keys):
+        for k in keys:
+            for c in df.columns:
+                if k in str(c):
+                    return c
+        return None
+    if "firstInDate" not in df.columns:
+        c = find_col_by_keys(["최초입고일", "입고일", "최초 입고일"])
+        if c:
+            df = df.rename(columns={c: "firstInDate"})
+    if "inAmount" not in df.columns:
+        c = find_col_by_keys(["누적입고액", "입고액", "누적 입고액"])
+        if c:
+            df = df.rename(columns={c: "inAmount"})
+    if "outAmount" not in df.columns:
+        c = find_col_by_keys(["출고액", "출고 액"])
+        if c:
+            df = df.rename(columns={c: "outAmount"})
+    if "saleAmount" not in df.columns:
+        c = find_col_by_keys(["누적판매액", "판매액", "누적 판매액", "외형매출"])
+        if c:
+            df = df.rename(columns={c: "saleAmount"})
+    return df
 
 def fill_missing_required_columns(df, required_columns):
     """없는 필수 컬럼을 기본값으로 채움 (시트 구조가 다를 때 대시보드만 동작하도록)"""
@@ -796,15 +820,11 @@ if snapshots_sheet_name and snapshots_sheet_name.strip():
 flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
 # 흐름별 조건: 해당 조건을 만족하는 행이 하나라도 있는 스타일 수
 _flow_conditions = {
-    "입고": (filtered_df["inboundQty"] > 0),
-    "출고": (filtered_df["outboundQty"] > 0),
+    "입고": filtered_df["_입고"],
+    "출고": filtered_df["_출고"],
     "촬영": (filtered_df["__shot_done"] == 1),
     "등록": (filtered_df["isRegistered"] == 1),
-    "판매개시": (
-        (pd.to_numeric(filtered_df["salesQty"], errors="coerce").fillna(0) > 0)
-        | (filtered_df["isOnSale"] == 1)
-        | (filtered_df["isRegistered"] == 1)
-    ),
+    "판매개시": filtered_df["_판매"],
 }
 flow_counts = pd.Series({
     flow: filtered_df.loc[cond]["styleCode"].nunique()
@@ -839,7 +859,7 @@ selected_flow = st.session_state.selected_flow
 # 상세 테이블: 필터된 전체 스타일 사용 (선택한 flow 조건으로만 자르지 않음)
 flow_df = filtered_df.copy()
 
-# 스타일 단위: styleCode 기준 집계 (수량 합산, 촬영/등록/판매개시는 하나라도 1이면 1)
+# 스타일 단위: styleCode 기준 집계 (참조와 동일·입고/출고는 any 충족 시 1)
 if len(flow_df) > 0:
     group_cols = ["brand", "yearSeason", "styleCode"]
     agg_dict = {
@@ -851,6 +871,9 @@ if len(flow_df) > 0:
         "__shot_done": "max",
         "isRegistered": "max",
         "isOnSale": "max",
+        "_입고": "max",
+        "_출고": "max",
+        "_판매": "max",
     }
     if "productName" in flow_df.columns:
         agg_dict["productName"] = "first"
