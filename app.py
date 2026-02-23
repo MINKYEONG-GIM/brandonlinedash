@@ -3,13 +3,9 @@ import pandas as pd
 from io import BytesIO
 import unicodedata
 
-
-
 st.set_page_config(page_title="(브랜드 상세) 대시보드", layout="wide")
 
-
 # Google Sheets 연동
-
 def get_gsheet_client(credentials_dict):
     if credentials_dict is None:
         return None
@@ -26,7 +22,6 @@ def get_gsheet_client(credentials_dict):
 
 
 def _normalize_spreadsheet_id(spreadsheet_id_or_url):
-    """스프레드시트 ID 또는 URL을 받아 ID로 정규화."""
     import re
 
     if spreadsheet_id_or_url is None:
@@ -35,23 +30,19 @@ def _normalize_spreadsheet_id(spreadsheet_id_or_url):
     if not s:
         return ""
 
-    # URL: https://docs.google.com/spreadsheets/d/<ID>/edit...
     m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", s)
     if m:
         return m.group(1)
 
-    # 공유 링크에 key= 로 들어오는 케이스
     m = re.search(r"(?:^|[?&])key=([a-zA-Z0-9-_]+)", s)
     if m:
         return m.group(1)
 
     return s
 
-
 def open_or_create_spreadsheet(client, spreadsheet_id=None, spreadsheet_title=None, create_if_missing=False):
-    """ID가 있으면 open_by_key, 없으면 title로 open(옵션으로 create)."""
-    import gspread
 
+    import gspread
     sid = _normalize_spreadsheet_id(spreadsheet_id)
     if sid:
         return client.open_by_key(sid)
@@ -101,7 +92,6 @@ def load_sheet_as_dataframe(
     create_spreadsheet_if_missing=False,
     create_worksheet_if_missing=False,
 ):
-    """header_row: 0 = 첫 번째 행이 헤더(기본), 1 = 두 번째 행이 헤더 등"""
     try:
         spreadsheet = open_or_create_spreadsheet(
             client,
@@ -169,7 +159,6 @@ BRAND_TO_SHEET = {
 }
 
 def _normalize_style_code_for_merge(val):
-    """merge 시 브랜드 시트·BASE 시트 간 스타일코드 매칭을 위해 동일 형식으로 정규화 (공백 제거, nan 처리)"""
     if pd.isna(val):
         return ""
     s = str(val).strip()
@@ -185,7 +174,7 @@ def brand_from_style_code(style_code):
     code = str(style_code).strip()[:2].lower()
     return BRAND_CODE_MAP.get(code, code.upper())
 
-# 스타일코드 5번째 자리 → 연도, 6번째 자리 → 시즌. 예: sp23g1fh28 → 5번째 G=2026년, 6번째 1=1시즌 → 20261 시즌 상품
+# 스타일코드 5번째 자리 → 연도, 6번째 자리 → 시즌
 STYLE_CODE_SEASON_TO_YEAR = {
     "G": "2026",
     "F": "2025",
@@ -193,8 +182,7 @@ STYLE_CODE_SEASON_TO_YEAR = {
 }
 
 def year_from_style_code(style_code, brand=None):
-    """스타일코드에서 연도 문자 추출 후 해당 연도 반환 (예: G → 2026).
-    미쏘만 6번째 자리가 연도, 그 외 브랜드는 5번째 자리가 연도. 매핑 없으면 빈 문자열."""
+    """스타일코드 미쏘만 6번째 자리가 연도, 그 외 브랜드는 5번째 자리가 연도."""
     if pd.isna(style_code) or not str(style_code).strip():
         return ""
     s = str(style_code).strip()
