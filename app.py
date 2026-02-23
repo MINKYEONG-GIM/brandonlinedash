@@ -194,28 +194,42 @@ STYLE_CODE_SEASON_TO_YEAR = {
     "H": "2027",
 }
 
-def year_from_style_code(style_code):
-    """스타일코드 5번째 자리가 연도값이면 해당 연도 반환 (예: G → 2026). 매핑 없으면 빈 문자열."""
+def year_from_style_code(style_code, brand=None):
+    """스타일코드에서 연도 문자 추출 후 해당 연도 반환 (예: G → 2026).
+    미쏘만 6번째 자리가 연도, 그 외 브랜드는 5번째 자리가 연도. 매핑 없으면 빈 문자열."""
     if pd.isna(style_code) or not str(style_code).strip():
         return ""
     s = str(style_code).strip()
-    if len(s) < 5:
-        return ""
-    year_char = s[4].upper()
+    if brand == "미쏘":
+        if len(s) < 6:
+            return ""
+        year_char = s[5].upper()
+    else:
+        if len(s) < 5:
+            return ""
+        year_char = s[4].upper()
     return STYLE_CODE_SEASON_TO_YEAR.get(year_char, "")
 
 
-def year_season_from_style_code(style_code):
-    """스타일코드 5번째(연도)·6번째(시즌) 자리로 '20261' 형태 반환. 표시용 '20261 시즌 상품'도 반환."""
+def year_season_from_style_code(style_code, brand=None):
+    """스타일코드에서 연도·시즌 자리로 '20261' 형태 반환. 미쏘만 6번째=연도·7번째=시즌, 그 외 5번째=연도·6번째=시즌."""
     if pd.isna(style_code) or not str(style_code).strip():
         return "", ""
     s = str(style_code).strip()
-    if len(s) < 6:
-        return "", ""
-    y = year_from_style_code(style_code)
-    if not y:
-        return "", ""
-    season_digit = s[5]
+    if brand == "미쏘":
+        if len(s) < 7:
+            return "", ""
+        y = year_from_style_code(style_code, "미쏘")
+        if not y:
+            return "", ""
+        season_digit = s[6]
+    else:
+        if len(s) < 6:
+            return "", ""
+        y = year_from_style_code(style_code, brand)
+        if not y:
+            return "", ""
+        season_digit = s[5]
     if not season_digit.isdigit():
         return "", ""
     ys = y + season_digit
@@ -684,9 +698,9 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
 # ----------------------------
 items_df["단계상태"] = items_df.apply(compute_status, axis=1)
 
-# 연도·시즌: 스타일코드 5번째(연도)·6번째(시즌) 자리로 파악. 예: sp23g1fh28 → 2026년, 1시즌 → 20261 시즌 상품
-items_df["_year"] = items_df["styleCode"].apply(year_from_style_code)
-_ys_from_style = items_df["styleCode"].apply(lambda x: year_season_from_style_code(x)[0])
+# 연도·시즌: 스타일코드에서 파악. 미쏘만 6번째=연도·7번째=시즌, 그 외 5번째=연도·6번째=시즌. 예: sp23g1fh28 → 2026년, 1시즌 → 20261 시즌 상품
+items_df["_year"] = items_df.apply(lambda row: year_from_style_code(row["styleCode"], row["brand"]), axis=1)
+_ys_from_style = items_df.apply(lambda row: year_season_from_style_code(row["styleCode"], row["brand"])[0], axis=1)
 if (_ys_from_style != "").any():
     items_df["yearSeason"] = items_df["yearSeason"].astype(str)
     items_df.loc[_ys_from_style != "", "yearSeason"] = _ys_from_style[_ys_from_style != ""]
@@ -879,5 +893,3 @@ st.download_button(
     file_name=f"상세현황_{selected_flow}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
-
-
