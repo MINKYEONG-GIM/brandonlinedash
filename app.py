@@ -5,18 +5,15 @@ import unicodedata
 
 
 
-st.set_page_config(page_title="(브랜드 상세) 대시보드", layout="wide")
+st.set_page_config(page_title="(상품 상세) 흐름 대시보드", layout="wide")
 
-# ----------------------------
+
 # Google Sheets 연동
-# ----------------------------
 def get_gsheet_client(credentials_dict):
     if credentials_dict is None:
         return None
     import gspread
     from google.oauth2.service_account import Credentials
-    # 스프레드시트/워크시트를 "생성"까지 하려면 readonly 권한으로는 불가능합니다.
-    # 읽기만 해도 아래 scope는 동작하며, 생성/추가 시트 등도 지원합니다.
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
@@ -28,7 +25,6 @@ def get_gsheet_client(credentials_dict):
 
 
 def _normalize_spreadsheet_id(spreadsheet_id_or_url):
-    """스프레드시트 ID 또는 URL을 받아 ID로 정규화."""
     import re
 
     if spreadsheet_id_or_url is None:
@@ -221,32 +217,6 @@ def year_season_from_style_code(style_code):
     ys = y + season_digit
     return ys, f"{ys} 시즌 상품"
 
-
-def year_from_style_code_for_mi(style_code):
-    """미쏘 전용: 스타일코드 6번째 자리 → 연도 (5번째는 무시)."""
-    if pd.isna(style_code) or not str(style_code).strip():
-        return ""
-    s = str(style_code).strip()
-    if len(s) < 6:
-        return ""
-    year_char = s[5].upper()
-    return STYLE_CODE_SEASON_TO_YEAR.get(year_char, "")
-
-
-def year_season_from_style_code_for_mi(row):
-    """미쏘 예외: 6번째 자리 → 연도, 시즌은 시즌(Now) 열(_season_now) 참조."""
-    if row["brand"] != "미쏘":
-        return row["yearSeason"]
-    style_code = str(row["styleCode"]).strip() if not pd.isna(row["styleCode"]) else ""
-    season_now = str(row.get("_season_now", "")).strip()
-    if len(style_code) >= 6 and season_now:
-        year_char = style_code[5].upper()
-        year_val = STYLE_CODE_SEASON_TO_YEAR.get(year_char, "")
-        if year_val:
-            return year_val + season_now
-    return row.get("yearSeason", "")
-
-
 # 시트 컬럼명 → 앱 필수 컬럼명 매핑 (한글/다른 표기 지원)
 COLUMN_ALIASES = {
     "브랜드": "brand",
@@ -273,14 +243,6 @@ COLUMN_ALIASES = {
     "판매수량": "salesQty",
     "누적입고량(물류+입고조정+브랜드간)": "inboundQty",
     "출고량[출고-반품](매장+고객+샘플+브랜드간)": "outboundQty",
-    "최초입고일": "firstInDate",
-    "입고일": "firstInDate",
-    "누적입고액": "inAmount",
-    "입고액": "inAmount",
-    "출고액": "outAmount",
-    "누적판매액": "saleAmount",
-    "판매액": "saleAmount",
-    "누적 판매액[외형매출]": "saleAmount",
     "누적 판매량": "salesQty",
     "판매재고량(입고량-누판량)": "stockQty",
     "리터칭 완료일": "isShot",
@@ -311,34 +273,7 @@ def apply_column_aliases(df):
             # 이미 있는 컬럼으로 덮어쓰지 않음 (예: yearSeason은 년도+시즌으로 이미 채움)
             if target not in df.columns or col == target:
                 rename[col] = target
-    # 미쏘 예외: 시즌(Now)가 yearSeason으로 rename되기 전에 값 보존 (다른 브랜드 로직 무영향)
-    if "시즌(Now)" in df.columns:
-        df["_season_now"] = df["시즌(Now)"].astype(str).str.strip()
-    df = df.rename(columns=rename) if rename else df
-    # 참조와 동일: 키워드로 입고/출고/판매 관련 컬럼 찾기 (정확한 별칭 없을 때)
-    def find_col_by_keys(keys):
-        for k in keys:
-            for c in df.columns:
-                if k in str(c):
-                    return c
-        return None
-    if "firstInDate" not in df.columns:
-        c = find_col_by_keys(["최초입고일", "입고일", "최초 입고일"])
-        if c:
-            df = df.rename(columns={c: "firstInDate"})
-    if "inAmount" not in df.columns:
-        c = find_col_by_keys(["누적입고액", "입고액", "누적 입고액"])
-        if c:
-            df = df.rename(columns={c: "inAmount"})
-    if "outAmount" not in df.columns:
-        c = find_col_by_keys(["출고액", "출고 액"])
-        if c:
-            df = df.rename(columns={c: "outAmount"})
-    if "saleAmount" not in df.columns:
-        c = find_col_by_keys(["누적판매액", "판매액", "누적 판매액", "외형매출"])
-        if c:
-            df = df.rename(columns={c: "saleAmount"})
-    return df
+    return df.rename(columns=rename) if rename else df
 
 def fill_missing_required_columns(df, required_columns):
     """없는 필수 컬럼을 기본값으로 채움 (시트 구조가 다를 때 대시보드만 동작하도록)"""
@@ -353,13 +288,14 @@ def fill_missing_required_columns(df, required_columns):
                 df[col] = ""
     return df
 
-# ----------------------------
-# 단계상태 가장 앞 단계에서 멈춘 곳 하나
-# ----------------------------
+
+# 단계상태 판정 (단일 컬럼, flow와 무관)
+# - 가장 앞 단계에서 멈춘 곳 하나만 표시
+
 def compute_status(row):
-    if not row.get("_입고", True):
+    if row["inboundQty"] == 0:
         return "미입고"
-    if not row.get("_출고", True):
+    if row["outboundQty"] == 0:
         return "미출고"
     if row["__shot_done"] == 0:
         return "미촬영"
@@ -385,10 +321,10 @@ FLOW_SORT_ORDER = {
     "등록": ["미등록", "미입고", "미출고", "미촬영", "판매개시"],
 }
 
-# ----------------------------
+
 # 촬영 완료 판정: 리터칭완료일·업로드완료일 등 날짜 컬럼
-# ----------------------------
-# 규칙: "리터칭완료일" 또는 "업로드완료일" 열에 날짜 값이 있으면 촬영 O
+
+# 규칙: "리터칭완료일" 또는 "업로드완료일" 열에 날짜 값이 있으면 그 행은 촬영 O. (클라비스는 업로드완료일 사용)
 
 def _normalize_col_name(name):
     """컬럼명 비교용: 앞뒤 공백·제어문자 제거, 유니코드 정규화, 공백 통일."""
@@ -448,12 +384,12 @@ def _parse_date_series(ser):
             out = out.fillna(out2)
         except Exception:
             pass
-    # "2025. 11. 17", "2025. 1. 15"처럼 점·공백 혼합 형식 → 하이픈으로 통일해 파싱
+    # "2025. 1. 15"처럼 점 앞뒤 공백 제거 후 재시도
     still_na = out.isna()
     if still_na.any():
         try:
             s = ser.astype(str).str.strip()
-            s = s.str.replace(r"\s*\.\s*", "-", regex=True).str.replace(r"\s*-\s*", "-", regex=True)
+            s = s.str.replace(r"\s*\.\s*", ".", regex=True).str.replace(r"\s*-\s*", "-", regex=True)
             out3 = pd.to_datetime(s, errors="coerce")
             out = out.fillna(out3)
         except Exception:
@@ -486,7 +422,7 @@ def _looks_like_date_value(val):
 def compute_shot_done_series(df, preferred_date_column=None):
     """촬영 완료 여부(0/1) 시리즈를 생성.
 
-    리터칭완료일에 값(날짜)이 있으면 촬영 완료
+    리터칭완료일에 값(날짜)이 있으면 그 행은 촬영 완료(O).
     리터칭완료일 컬럼이 없으면 촬영일자/포토촬영일 등 다른 날짜 컬럼, 없으면 isShot(0/1) 폴백.
     """
     date_col = _find_photo_date_column(df, preferred_name=preferred_date_column)
@@ -506,14 +442,30 @@ def compute_shot_done_series(df, preferred_date_column=None):
     return pd.Series([0] * len(df), index=df.index, dtype="int64")
 
 
-# ----------------------------
-# 제목
-# ----------------------------
-st.title("브랜드 상품 흐름 대시보드")
+# 스냅샷 증감 계산
 
-# ----------------------------
+def compute_flow_deltas(df):
+    if len(df) < 2:
+        return None
+    this_week = df.iloc[0]
+    last_week = df.iloc[1]
+    return {
+        "입고": this_week["inboundDone"] - last_week["inboundDone"],
+        "출고": this_week["outboundDone"] - last_week["outboundDone"],
+        "촬영": this_week["shotDone"] - last_week["shotDone"],
+        "등록": this_week["registeredDone"] - last_week["registeredDone"],
+        "판매개시": this_week["onSaleDone"] - last_week["onSaleDone"],
+    }
+
+
+# 제목
+
+st.title("브랜드 상품 흐름 대시보드")
+st.caption("입고 · 출고 · 촬영 · 등록 · 판매개시 현황")
+
+
 # Google Sheets 연결 (Secrets만 사용, UI 없음)
-# ----------------------------
+
 SPREADSHEET_OPTIONS = {
     "BASE_SPREADSHEET_ID": "BASE",
     "SP_SPREADSHEET_ID": "SP",
@@ -553,6 +505,9 @@ create_spreadsheet_if_missing = False
 
 if not spreadsheet_ids:
     # ID가 없으면(옵션) 제목으로 열기/생성할 수 있게 지원
+    # - AUTO_CREATE_SPREADSHEET=true 이고
+    # - SPREADSHEET_TITLE(또는 BASE_SPREADSHEET_TITLE)가 있으면
+    # 스프레드시트를 생성/오픈 후 계속 진행합니다.
     auto_create = str(st.secrets.get("AUTO_CREATE_SPREADSHEET", "")).strip().lower() in ("1", "true", "yes", "y")
     spreadsheet_title = str(st.secrets.get("SPREADSHEET_TITLE", "")).strip() or str(st.secrets.get("BASE_SPREADSHEET_TITLE", "")).strip()
     if auto_create and spreadsheet_title:
@@ -560,7 +515,7 @@ if not spreadsheet_ids:
         spreadsheet_id = None
         create_spreadsheet_if_missing = True
     else:
-        st.error("Secrets에 스프레드시트 ID가 없습니다.")
+        st.error("Secrets에 스프레드시트 ID가 없습니다. BASE_SPREADSHEET_ID 등을 설정하거나, AUTO_CREATE_SPREADSHEET=true 와 SPREADSHEET_TITLE을 설정하세요.")
         st.stop()
 else:
     # 기본값: Secrets 첫 번째 시트, 첫 시트 탭, 헤더 1행
@@ -578,7 +533,7 @@ else:
 snapshots_sheet_name = ""
 
 if not gs_client:
-    st.info("Secrets에 google_service_account를 설정해 주세요.")
+    st.info("Streamlit Secrets에 **gcp_service_account** 또는 **google_service_account**를 설정해 주세요.")
     st.stop()
 
 # API 429(Quota exceeded) 완화: 시트 ID만 있을 때 90초 캐시 사용 (header_row 자동감지(-1)일 땐 미사용)
@@ -614,18 +569,16 @@ if "styleCode" in items_df.columns:
 # 시트에서 읽은 값은 문자열이므로 숫자 컬럼 변환
 # 리터칭 완료일 → isShot, 공홈등록일 → isRegistered: 날짜 문자열을 0/1로 변환 (날짜 있으면 1)
 # 시트에 미완료일 때 '0' 넣는 경우가 있으므로 0/'0'은 무조건 '날짜 없음'(0)으로 처리. 구글 시트 날짜(엑셀 시리얼)도 인식
-# "2025. 11. 17", "2025-11-17" 등 다양한 형식은 _parse_date_series로 통일 파싱
 def _date_cell_to_01(ser):
     s = ser.astype(str).str.strip()
     num = pd.to_numeric(ser, errors="coerce")
     no_date = s.isin(("", "0", "0.0", "-", ".")) | (num == 0)
-    parsed = _parse_date_series(ser)
-    done = (parsed.notna() & ~no_date).astype(int)
-    # 파싱 실패해도 값이 날짜 형태면 등록/촬영 완료로 처리 (형식 이슈 방지)
-    if (done == 0).any():
-        fallback = s.apply(_looks_like_date_value).astype(int)
-        done = done.where(done == 1, fallback)
-    return done
+    parsed = pd.to_datetime(ser, errors="coerce")
+    # 숫자만 있는데 10000~1000000 구간이면 엑셀/구글 시트 날짜 시리얼 → 유효한 날짜로 간주
+    excel_date = num.notna() & (num > 10000) & (num < 1000000)
+    if excel_date.any():
+        parsed = parsed.fillna(pd.to_datetime(num[excel_date], unit="D", origin="1899-12-30"))
+    return (parsed.notna() & ~no_date).astype(int)
 
 if "isShot" in items_df.columns:
     items_df["isShot"] = _date_cell_to_01(items_df["isShot"])
@@ -652,23 +605,8 @@ if missing:
     items_df = fill_missing_required_columns(items_df, required_columns)
 
 
-# 입고/출고/판매 판정 (참조: 온/오프 전체 입출고 현황과 동일)
-# 입고 = 입고량>0 OR 누적입고액>0 / 출고 = 출고액>0(또는 출고량>0) / 판매 = 누적판매액>0 OR 판매량>0 
-for col, default in [("inAmount", 0), ("outAmount", 0), ("saleAmount", 0)]:
-    if col not in items_df.columns:
-        items_df[col] = default
-    else:
-        items_df[col] = pd.to_numeric(items_df[col], errors="coerce").fillna(0)
-has_in_qty = pd.to_numeric(items_df["inboundQty"], errors="coerce").fillna(0) > 0
-has_in_amt = pd.to_numeric(items_df["inAmount"], errors="coerce").fillna(0) > 0
-items_df["_입고"] = has_in_qty | has_in_amt
-out_amt = pd.to_numeric(items_df["outAmount"], errors="coerce").fillna(0)
-items_df["_출고"] = (out_amt > 0) | (pd.to_numeric(items_df["outboundQty"], errors="coerce").fillna(0) > 0)
-sale_amt = pd.to_numeric(items_df["saleAmount"], errors="coerce").fillna(0)
-items_df["_판매"] = (sale_amt > 0) | (pd.to_numeric(items_df["salesQty"], errors="coerce").fillna(0) > 0) | (pd.to_numeric(items_df["isOnSale"], errors="coerce").fillna(0) == 1)
+# 촬영·등록 여부: 브랜드별 시트(SP/MI/CV/RM/WH)에서만 읽어서 merge. BASE에서는 사용 안 함.
 
-
-# 촬영·등록 여부: 브랜드별 시트(SP/MI/CV/RM/WH)만 merge. BASE 사용 안함
 preferred_shot_date_col = (st.secrets.get("SHOT_DATE_COLUMN") or "").strip() or None
 shot_date_column = None
 items_df["__shot_done"] = 0
@@ -738,7 +676,8 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
         items_df.drop(columns=["_styleCode"], inplace=True, errors="ignore")
 
 
-# 단계상태 생성 (모든 스타일코드는 하나의 상태만 가짐)
+# 단계상태 생성
+
 items_df["단계상태"] = items_df.apply(compute_status, axis=1)
 
 # 연도·시즌: 스타일코드 5번째(연도)·6번째(시즌) 자리로 파악. 예: sp23g1fh28 → 2026년, 1시즌 → 20261 시즌 상품
@@ -750,12 +689,6 @@ if (_ys_from_style != "").any():
 empty_year = items_df["_year"] == ""
 if empty_year.any():
     items_df.loc[empty_year, "_year"] = items_df.loc[empty_year, "yearSeason"].astype(str).str[:4]
-
-# 미쏘만 예외: 5번째 자리 무시, 6번째 자리 → 연도, 시즌은 시즌(Now) 열(_season_now) 참조
-mi_mask = items_df["brand"] == "미쏘"
-if mi_mask.any():
-    items_df.loc[mi_mask, "_year"] = items_df.loc[mi_mask, "styleCode"].apply(year_from_style_code_for_mi)
-    items_df.loc[mi_mask, "yearSeason"] = items_df.loc[mi_mask].apply(year_season_from_style_code_for_mi, axis=1)
 
 
 # 필터 영역
@@ -781,7 +714,7 @@ with col3:
 with col4:
     search = st.text_input(
         "스타일코드 검색",
-        placeholder="스타일코드 검색",
+        placeholder="스타일코드 또는 판정 상태 검색",
     )
 
 if year is not None and year_seasons:
@@ -810,24 +743,25 @@ if total_n == 0:
     st.stop()
 
 
-# 흐름 집계 카드 (해당 단계 1건이라도 있으면 포함)
+# 흐름 집계 카드 (스타일 수 기준: 해당 단계 1건이라도 있으면 스타일 포함)
 
 flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
 # 흐름별 조건: 해당 조건을 만족하는 행이 하나라도 있는 스타일 수
 _flow_conditions = {
-    "입고": filtered_df["_입고"],
-    "출고": filtered_df["_출고"],
+    "입고": (filtered_df["inboundQty"] > 0),
+    "출고": (filtered_df["outboundQty"] > 0),
     "촬영": (filtered_df["__shot_done"] == 1),
     "등록": (filtered_df["isRegistered"] == 1),
-    "판매개시": filtered_df["_판매"],
+    "판매개시": (
+        (pd.to_numeric(filtered_df["salesQty"], errors="coerce").fillna(0) > 0)
+        | (filtered_df["isOnSale"] == 1)
+        | (filtered_df["isRegistered"] == 1)
+    ),
 }
 flow_counts = pd.Series({
     flow: filtered_df.loc[cond]["styleCode"].nunique()
     for flow, cond in _flow_conditions.items()
 })
-
-# 이전 기간 대비 증감(선택): None이면 버튼에 증감 미표시. 계산 시 {"입고": 2, "출고": -1, ...} 형태 사용
-deltas = None
 
 if "selected_flow" not in st.session_state:
     st.session_state.selected_flow = flow_types[0]
@@ -857,7 +791,7 @@ selected_flow = st.session_state.selected_flow
 # 상세 테이블: 필터된 전체 스타일 사용 (선택한 flow 조건으로만 자르지 않음)
 flow_df = filtered_df.copy()
 
-# 스타일 단위: styleCode 기준 집계 (참조와 동일·입고/출고는 any 충족 시 1)
+# 스타일 단위: styleCode 기준 집계 (수량 합산, 촬영/등록/판매개시는 하나라도 1이면 1)
 if len(flow_df) > 0:
     group_cols = ["brand", "yearSeason", "styleCode"]
     agg_dict = {
@@ -869,9 +803,6 @@ if len(flow_df) > 0:
         "__shot_done": "max",
         "isRegistered": "max",
         "isOnSale": "max",
-        "_입고": "max",
-        "_출고": "max",
-        "_판매": "max",
     }
     if "productName" in flow_df.columns:
         agg_dict["productName"] = "first"
@@ -896,9 +827,9 @@ flow_df["_촬영"] = flow_df["__shot_done"].map(lambda x: "O" if (pd.notna(x) an
 flow_df["_등록"] = flow_df["isRegistered"].map(lambda x: "O" if (pd.notna(x) and x == 1) else "X")
 
 
-# 상세 테이블 
+# 상세 테이블 (NO, 스타일코드, 상품명, 컬러, 입고/출고/재고, 촬영, 등록, 상태) — 판매 열 제거
 
-st.subheader(f"{selected_flow} 현황 - 미진행된 건부터 노출됩니다.")
+st.subheader(f"상세 현황 · {selected_flow}")
 
 display_df = flow_df.copy()
 display_df.insert(0, "NO", range(1, len(display_df) + 1))
@@ -908,6 +839,7 @@ display_df = display_df[show_cols]
 display_df = display_df.rename(columns={
     "styleCode": "스타일코드",
     "productName": "상품명",
+    "colorName": "컬러",
     "inboundQty": "입고량",
     "outboundQty": "출고량",
     "stockQty": "재고량",
@@ -925,7 +857,7 @@ def to_excel(df):
 
 excel_data = to_excel(display_df)
 st.download_button(
-    label="엑셀 다운로드하기",
+    label="Download",
     data=excel_data,
     file_name=f"상세현황_{selected_flow}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
