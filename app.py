@@ -265,14 +265,12 @@ COLUMN_ALIASES = {
 }
 
 def ensure_year_season_from_columns(df):
-    """년도(Now) + 시즌(Now) → yearSeason 조합 (deploy 입출고 현황 시즌 형식과 동일: 20262)"""
+    """년도(Now) + 시즌(Now) → yearSeason 조합"""
     if "yearSeason" in df.columns:
         return df
     if "년도(Now)" in df.columns and "시즌(Now)" in df.columns:
         df = df.copy()
-        y = df["년도(Now)"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True).str[:4]
-        s = df["시즌(Now)"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
-        df["yearSeason"] = y + s
+        df["yearSeason"] = df["년도(Now)"].astype(str) + df["시즌(Now)"].astype(str)
     return df
 
 def apply_column_aliases(df):
@@ -645,7 +643,7 @@ if missing:
 
 # ----------------------------
 # 입고/출고/판매 판정 (참조: 온/오프 전체 입출고 현황과 동일)
-# 입고 = 최초입고일 유효 OR 입고량>0 OR 누적입고액>0 / 출고 = 출고액>0 (deploy 입출고 현황과 동일) / 판매 = 누적판매액>0 (deploy와 동일)
+# 입고 = 최초입고일 유효 OR 입고량>0 OR 누적입고액>0 / 출고 = 출고액>0(또는 출고량>0) / 판매 = 누적판매액>0(또는 판매량/판매개시)
 # ----------------------------
 if "firstInDate" in items_df.columns:
     items_df["firstInDate"] = _date_cell_to_01(items_df["firstInDate"])
@@ -661,9 +659,9 @@ has_qty = (pd.to_numeric(items_df["inboundQty"], errors="coerce").fillna(0) > 0)
 has_amt = (pd.to_numeric(items_df["inAmount"], errors="coerce").fillna(0) > 0)
 items_df["_입고"] = in_date_ok | has_qty | has_amt
 out_amt = pd.to_numeric(items_df["outAmount"], errors="coerce").fillna(0)
-items_df["_출고"] = (out_amt > 0)  # deploy (온/오프 전체) 입출고 현황과 동일: 출고액 기준만
+items_df["_출고"] = (out_amt > 0) | (pd.to_numeric(items_df["outboundQty"], errors="coerce").fillna(0) > 0)
 sale_amt = pd.to_numeric(items_df["saleAmount"], errors="coerce").fillna(0)
-items_df["_판매"] = (sale_amt > 0)  # deploy 입출고 현황과 동일: 누적 판매액 기준만
+items_df["_판매"] = (sale_amt > 0) | (pd.to_numeric(items_df["salesQty"], errors="coerce").fillna(0) > 0) | (pd.to_numeric(items_df["isOnSale"], errors="coerce").fillna(0) == 1)
 
 # ----------------------------
 # 촬영·등록 여부: 브랜드별 시트(SP/MI/CV/RM/WH)에서만 읽어서 merge. BASE에서는 사용 안 함.
