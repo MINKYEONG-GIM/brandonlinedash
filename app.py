@@ -728,6 +728,9 @@ flow_counts = pd.Series({
     for flow, cond in _flow_conditions.items()
 })
 
+# 흐름별 증감(delta) - 이전 기간 대비 비교용 (데이터 소스 있으면 여기서 계산 후 dict로 할당)
+deltas = None
+
 if "selected_flow" not in st.session_state:
     st.session_state.selected_flow = flow_types[0]
 
