@@ -343,8 +343,7 @@ def _normalize_col_name(name):
     return s.replace(" ", "").replace("\u3000", "")
 
 def _find_photo_date_column(df, preferred_name=None):
-    """촬영 완료를 판정할 날짜 컬럼. 리터칭완료일·업로드완료일 우선, 없으면 촬영일자/포토촬영일 등."""
-    # 0순위: Secrets에 지정된 컬럼명이 있으면 정확히 그 컬럼 사용
+    """촬영완료를 판정할 컬럼. 리터칭완료일·업로드완료일 등."""
     if preferred_name and str(preferred_name).strip():
         name = str(preferred_name).strip()
         for c in df.columns:
@@ -377,7 +376,6 @@ def _find_registration_date_column(df):
 
 
 def _parse_date_series(ser):
-    """다양한 날짜 형식 파싱 (문자열, Excel/구글 시트 일련번호 등). 공백/형식 차이 관대하게 처리."""
     out = pd.to_datetime(ser, errors="coerce")
     # 파싱 실패한 셀: 앞뒤 공백 제거 후 재시도
     still_na = out.isna()
@@ -424,8 +422,7 @@ def _looks_like_date_value(val):
 
 
 def compute_shot_done_series(df, preferred_date_column=None):
-    """촬영 완료 여부(0/1) 시리즈를 생성.
-
+    """촬영 완료 여부(0/1) 시리즈 생성.
     리터칭완료일에 값(날짜)이 있으면 그 행은 촬영 완료(O).
     리터칭완료일 컬럼이 없으면 촬영일자/포토촬영일 등 다른 날짜 컬럼, 없으면 isShot(0/1) 폴백.
     """
@@ -446,30 +443,12 @@ def compute_shot_done_series(df, preferred_date_column=None):
     return pd.Series([0] * len(df), index=df.index, dtype="int64")
 
 
-# 스냅샷 증감 계산
-
-def compute_flow_deltas(df):
-    if len(df) < 2:
-        return None
-    this_week = df.iloc[0]
-    last_week = df.iloc[1]
-    return {
-        "입고": this_week["inboundDone"] - last_week["inboundDone"],
-        "출고": this_week["outboundDone"] - last_week["outboundDone"],
-        "촬영": this_week["shotDone"] - last_week["shotDone"],
-        "등록": this_week["registeredDone"] - last_week["registeredDone"],
-        "판매개시": this_week["onSaleDone"] - last_week["onSaleDone"],
-    }
-
-
 # 제목
 
 st.title("브랜드 상품 흐름 대시보드")
-st.caption("입고 · 출고 · 촬영 · 등록 · 판매개시 현황")
 
 
-# Google Sheets 연결 (Secrets만 사용, UI 없음)
-
+# Google Sheets 연결 
 SPREADSHEET_OPTIONS = {
     "BASE_SPREADSHEET_ID": "BASE",
     "SP_SPREADSHEET_ID": "SP",
@@ -509,9 +488,6 @@ create_spreadsheet_if_missing = False
 
 if not spreadsheet_ids:
     # ID가 없으면(옵션) 제목으로 열기/생성할 수 있게 지원
-    # - AUTO_CREATE_SPREADSHEET=true 이고
-    # - SPREADSHEET_TITLE(또는 BASE_SPREADSHEET_TITLE)가 있으면
-    # 스프레드시트를 생성/오픈 후 계속 진행합니다.
     auto_create = str(st.secrets.get("AUTO_CREATE_SPREADSHEET", "")).strip().lower() in ("1", "true", "yes", "y")
     spreadsheet_title = str(st.secrets.get("SPREADSHEET_TITLE", "")).strip() or str(st.secrets.get("BASE_SPREADSHEET_TITLE", "")).strip()
     if auto_create and spreadsheet_title:
@@ -522,11 +498,9 @@ if not spreadsheet_ids:
         st.error("Secrets에 스프레드시트 ID가 없습니다. BASE_SPREADSHEET_ID 등을 설정하거나, AUTO_CREATE_SPREADSHEET=true 와 SPREADSHEET_TITLE을 설정하세요.")
         st.stop()
 else:
-    # 기본값: Secrets 첫 번째 시트, 첫 시트 탭, 헤더 1행
     selected_label = list(spreadsheet_ids.keys())[0]
     spreadsheet_id = spreadsheet_ids[selected_label]
 items_sheet_name = ""
-# 헤더 행(1-based). 기본 1 = 1행이 머릿글. 2행이 헤더인 시트면 Secrets에 HEADER_ROW = 2. 자동감지는 HEADER_ROW = 0
 _header_raw = st.secrets.get("HEADER_ROW")
 if _header_raw is None or str(_header_raw).strip() == "":
     header_row = 0  # 1행이 헤더 (0-based)
@@ -540,7 +514,6 @@ if not gs_client:
     st.info("Streamlit Secrets에 **gcp_service_account** 또는 **google_service_account**를 설정해 주세요.")
     st.stop()
 
-# API 429(Quota exceeded) 완화: 시트 ID만 있을 때 90초 캐시 사용 (header_row 자동감지(-1)일 땐 미사용)
 use_cache = spreadsheet_id and not create_spreadsheet_if_missing and not spreadsheet_title and (header_row >= 0)
 if use_cache:
     items_df = _cached_load_sheet(
@@ -566,19 +539,16 @@ if len(items_df) == 0:
 # 한글/다른 컬럼명을 필수 컬럼명으로 매핑
 items_df = apply_column_aliases(items_df)
 
-# 브랜드: 스타일코드(Now) 앞 2자리 → 매핑 테이블 한글명
+# 브랜드: 스타일코드(Now) 앞 2자리
 if "styleCode" in items_df.columns:
     items_df["brand"] = items_df["styleCode"].apply(brand_from_style_code)
 
-# 시트에서 읽은 값은 문자열이므로 숫자 컬럼 변환
-# 리터칭 완료일 → isShot, 공홈등록일 → isRegistered: 날짜 문자열을 0/1로 변환 (날짜 있으면 1)
-# 시트에 미완료일 때 '0' 넣는 경우가 있으므로 0/'0'은 무조건 '날짜 없음'(0)으로 처리. 구글 시트 날짜(엑셀 시리얼)도 인식
 def _date_cell_to_01(ser):
     s = ser.astype(str).str.strip()
     num = pd.to_numeric(ser, errors="coerce")
     no_date = s.isin(("", "0", "0.0", "-", ".")) | (num == 0)
     parsed = pd.to_datetime(ser, errors="coerce")
-    # 숫자만 있는데 10000~1000000 구간이면 엑셀/구글 시트 날짜 시리얼 → 유효한 날짜로 간주
+
     excel_date = num.notna() & (num > 10000) & (num < 1000000)
     if excel_date.any():
         parsed = parsed.fillna(pd.to_datetime(num[excel_date], unit="D", origin="1899-12-30"))
