@@ -448,12 +448,12 @@ def _parse_date_series(ser):
             out = out.fillna(out2)
         except Exception:
             pass
-    # "2025. 1. 15"처럼 점 앞뒤 공백 제거 후 재시도
+    # "2025. 11. 17", "2025. 1. 15"처럼 점·공백 혼합 형식 → 하이픈으로 통일해 파싱
     still_na = out.isna()
     if still_na.any():
         try:
             s = ser.astype(str).str.strip()
-            s = s.str.replace(r"\s*\.\s*", ".", regex=True).str.replace(r"\s*-\s*", "-", regex=True)
+            s = s.str.replace(r"\s*\.\s*", "-", regex=True).str.replace(r"\s*-\s*", "-", regex=True)
             out3 = pd.to_datetime(s, errors="coerce")
             out = out.fillna(out3)
         except Exception:
@@ -614,16 +614,18 @@ if "styleCode" in items_df.columns:
 # 시트에서 읽은 값은 문자열이므로 숫자 컬럼 변환
 # 리터칭 완료일 → isShot, 공홈등록일 → isRegistered: 날짜 문자열을 0/1로 변환 (날짜 있으면 1)
 # 시트에 미완료일 때 '0' 넣는 경우가 있으므로 0/'0'은 무조건 '날짜 없음'(0)으로 처리. 구글 시트 날짜(엑셀 시리얼)도 인식
+# "2025. 11. 17", "2025-11-17" 등 다양한 형식은 _parse_date_series로 통일 파싱
 def _date_cell_to_01(ser):
     s = ser.astype(str).str.strip()
     num = pd.to_numeric(ser, errors="coerce")
     no_date = s.isin(("", "0", "0.0", "-", ".")) | (num == 0)
-    parsed = pd.to_datetime(ser, errors="coerce")
-    # 숫자만 있는데 10000~1000000 구간이면 엑셀/구글 시트 날짜 시리얼 → 유효한 날짜로 간주
-    excel_date = num.notna() & (num > 10000) & (num < 1000000)
-    if excel_date.any():
-        parsed = parsed.fillna(pd.to_datetime(num[excel_date], unit="D", origin="1899-12-30"))
-    return (parsed.notna() & ~no_date).astype(int)
+    parsed = _parse_date_series(ser)
+    done = (parsed.notna() & ~no_date).astype(int)
+    # 파싱 실패해도 값이 날짜 형태면 등록/촬영 완료로 처리 (형식 이슈 방지)
+    if (done == 0).any():
+        fallback = s.apply(_looks_like_date_value).astype(int)
+        done = done.where(done == 1, fallback)
+    return done
 
 if "isShot" in items_df.columns:
     items_df["isShot"] = _date_cell_to_01(items_df["isShot"])
