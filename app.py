@@ -789,6 +789,9 @@ flow_counts = pd.Series({
     for flow, cond in _flow_conditions.items()
 })
 
+# 이전 기간 대비 증감(선택): None이면 버튼에 증감 미표시. 계산 시 {"입고": 2, "출고": -1, ...} 형태 사용
+deltas = None
+
 if "selected_flow" not in st.session_state:
     st.session_state.selected_flow = flow_types[0]
 
