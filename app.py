@@ -221,6 +221,32 @@ def year_season_from_style_code(style_code):
     ys = y + season_digit
     return ys, f"{ys} 시즌 상품"
 
+
+def year_from_style_code_for_mi(style_code):
+    """미쏘 전용: 스타일코드 6번째 자리 → 연도 (5번째는 무시)."""
+    if pd.isna(style_code) or not str(style_code).strip():
+        return ""
+    s = str(style_code).strip()
+    if len(s) < 6:
+        return ""
+    year_char = s[5].upper()
+    return STYLE_CODE_SEASON_TO_YEAR.get(year_char, "")
+
+
+def year_season_from_style_code_for_mi(row):
+    """미쏘 예외: 6번째 자리 → 연도, 시즌은 시즌(Now) 열(_season_now) 참조."""
+    if row["brand"] != "미쏘":
+        return row["yearSeason"]
+    style_code = str(row["styleCode"]).strip() if not pd.isna(row["styleCode"]) else ""
+    season_now = str(row.get("_season_now", "")).strip()
+    if len(style_code) >= 6 and season_now:
+        year_char = style_code[5].upper()
+        year_val = STYLE_CODE_SEASON_TO_YEAR.get(year_char, "")
+        if year_val:
+            return year_val + season_now
+    return row.get("yearSeason", "")
+
+
 # 시트 컬럼명 → 앱 필수 컬럼명 매핑 (한글/다른 표기 지원)
 COLUMN_ALIASES = {
     "브랜드": "brand",
@@ -285,6 +311,9 @@ def apply_column_aliases(df):
             # 이미 있는 컬럼으로 덮어쓰지 않음 (예: yearSeason은 년도+시즌으로 이미 채움)
             if target not in df.columns or col == target:
                 rename[col] = target
+    # 미쏘 예외: 시즌(Now)가 yearSeason으로 rename되기 전에 값 보존 (다른 브랜드 로직 무영향)
+    if "시즌(Now)" in df.columns:
+        df["_season_now"] = df["시즌(Now)"].astype(str).str.strip()
     df = df.rename(columns=rename) if rename else df
     # 참조와 동일: 키워드로 입고/출고/판매 관련 컬럼 찾기 (정확한 별칭 없을 때)
     def find_col_by_keys(keys):
@@ -719,6 +748,12 @@ if (_ys_from_style != "").any():
 empty_year = items_df["_year"] == ""
 if empty_year.any():
     items_df.loc[empty_year, "_year"] = items_df.loc[empty_year, "yearSeason"].astype(str).str[:4]
+
+# 미쏘만 예외: 5번째 자리 무시, 6번째 자리 → 연도, 시즌은 시즌(Now) 열(_season_now) 참조
+mi_mask = items_df["brand"] == "미쏘"
+if mi_mask.any():
+    items_df.loc[mi_mask, "_year"] = items_df.loc[mi_mask, "styleCode"].apply(year_from_style_code_for_mi)
+    items_df.loc[mi_mask, "yearSeason"] = items_df.loc[mi_mask].apply(year_season_from_style_code_for_mi, axis=1)
 
 
 # 필터 영역
