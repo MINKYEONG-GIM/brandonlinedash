@@ -611,14 +611,13 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
 
             shot_col = _find_photo_date_column(b_df, preferred_name=preferred_shot_date_col)
             if shot_col and shot_col in b_df.columns:
-                # 클라비스는 업로드완료일 값 존재 여부만 체크
-                if shot_col and shot_col in b_df.columns:
-                    b_df["__shot_done"] = _date_cell_to_01(b_df[shot_col])
-                    if shot_date_column is None:
-                        shot_date_column = f"{sheet_key} 시트 · {shot_col}"
-                else:
-                    b_df["__shot_done"] = 0
-            
+                # 모든 브랜드 동일 처리
+                b_df["__shot_done"] = _date_cell_to_01(b_df[shot_col])
+                if shot_date_column is None:
+                    shot_date_column = f"{sheet_key} 시트 · {shot_col}"
+            else:
+                b_df["__shot_done"] = 0
+                
                 if shot_date_column is None:
                     shot_date_column = f"{sheet_key} 시트 · {shot_col}"
             else:
