@@ -680,7 +680,7 @@ with col3:
 with col4:
     search = st.text_input(
         "스타일코드 검색",
-        placeholder="스타일코드 검색",
+        placeholder="설정하신 필터 내에서 검색됩니다",
     )
 
 if year is not None and year_seasons:
