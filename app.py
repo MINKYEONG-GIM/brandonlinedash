@@ -126,7 +126,7 @@ def load_sheet_as_dataframe(
         rows = worksheet.get_all_values()
         if not rows:
             return pd.DataFrame()
-        # 자동 헤더 감지: 1행에 '리터칭'이 없으면 2행·3행 시도 (실제 머릿글이 2행인 시트 대응)
+        # 자동 헤더 감지: 1행에 '리터칭'이 없으면 2행·3행 시도
         if header_row == -1:
             header_row = 0
             for try_row in range(min(3, len(rows))):
