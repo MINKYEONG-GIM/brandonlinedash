@@ -7,16 +7,14 @@ import unicodedata
 
 st.set_page_config(page_title="(브랜드 상세) 대시보드", layout="wide")
 
-# ----------------------------
+
 # Google Sheets 연동
-# ----------------------------
+
 def get_gsheet_client(credentials_dict):
     if credentials_dict is None:
         return None
     import gspread
     from google.oauth2.service_account import Credentials
-    # 스프레드시트/워크시트를 "생성"까지 하려면 readonly 권한으로는 불가능합니다.
-    # 읽기만 해도 아래 scope는 동작하며, 생성/추가 시트 등도 지원합니다.
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
@@ -306,10 +304,10 @@ def fill_missing_required_columns(df, required_columns):
                 df[col] = ""
     return df
 
-# ----------------------------
+
 # 단계상태 판정 (단일 컬럼, flow와 무관)
 # - 가장 앞 단계에서 멈춘 곳 하나만 표시
-# ----------------------------
+
 def compute_status(row):
     if row["inboundQty"] == 0:
         return "미입고"
@@ -339,9 +337,9 @@ FLOW_SORT_ORDER = {
     "등록": ["미등록", "미입고", "미출고", "미촬영", "판매개시"],
 }
 
-# ----------------------------
+
 # 촬영 완료 판정: 리터칭완료일·업로드완료일 등 날짜 컬럼
-# ----------------------------
+
 # 규칙: "리터칭완료일" 또는 "업로드완료일" 열에 날짜 값이 있으면 그 행은 촬영 O. (클라비스는 업로드완료일 사용)
 
 def _normalize_col_name(name):
@@ -459,9 +457,9 @@ def compute_shot_done_series(df, preferred_date_column=None):
 
     return pd.Series([0] * len(df), index=df.index, dtype="int64")
 
-# ----------------------------
+
 # 스냅샷 증감 계산
-# ----------------------------
+
 def compute_flow_deltas(df):
     if len(df) < 2:
         return None
@@ -475,15 +473,15 @@ def compute_flow_deltas(df):
         "판매개시": this_week["onSaleDone"] - last_week["onSaleDone"],
     }
 
-# ----------------------------
+
 # 제목
-# ----------------------------
+
 st.title("브랜드 상품 흐름 대시보드")
 st.caption("입고 · 출고 · 촬영 · 등록 · 판매개시 현황")
 
-# ----------------------------
+
 # Google Sheets 연결 (Secrets만 사용, UI 없음)
-# ----------------------------
+
 SPREADSHEET_OPTIONS = {
     "BASE_SPREADSHEET_ID": "BASE",
     "SP_SPREADSHEET_ID": "SP",
@@ -622,9 +620,9 @@ missing = [col for col in required_columns if col not in items_df.columns]
 if missing:
     items_df = fill_missing_required_columns(items_df, required_columns)
 
-# ----------------------------
+
 # 촬영·등록 여부: 브랜드별 시트(SP/MI/CV/RM/WH)에서만 읽어서 merge. BASE에서는 사용 안 함.
-# ----------------------------
+
 preferred_shot_date_col = (st.secrets.get("SHOT_DATE_COLUMN") or "").strip() or None
 shot_date_column = None
 items_df["__shot_done"] = 0
@@ -693,9 +691,9 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
         items_df["isRegistered"] = merged["isRegistered"].fillna(0).astype(int)
         items_df.drop(columns=["_styleCode"], inplace=True, errors="ignore")
 
-# ----------------------------
+
 # 단계상태 생성 (모든 스타일코드는 하나의 상태만 가짐)
-# ----------------------------
+
 items_df["단계상태"] = items_df.apply(compute_status, axis=1)
 
 # 연도·시즌: 스타일코드에서 파악. 미쏘만 6번째=연도·7번째=시즌, 그 외 5번째=연도·6번째=시즌. 예: sp23g1fh28 → 2026년, 1시즌 → 20261 시즌 상품
@@ -708,9 +706,9 @@ empty_year = items_df["_year"] == ""
 if empty_year.any():
     items_df.loc[empty_year, "_year"] = items_df.loc[empty_year, "yearSeason"].astype(str).str[:4]
 
-# ----------------------------
+
 # 필터 영역
-# ----------------------------
+
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     brand_options = sorted(items_df["brand"].unique())
@@ -773,9 +771,9 @@ if snapshots_sheet_name and snapshots_sheet_name.strip():
                 snapshots_df[c] = pd.to_numeric(snapshots_df[c], errors="coerce").fillna(0).astype(int)
         deltas = compute_flow_deltas(snapshots_df)
 
-# ----------------------------
+
 # 흐름 집계 카드 (스타일 수 기준: 해당 단계 1건이라도 있으면 스타일 포함)
-# ----------------------------
+
 flow_types = ["입고", "출고", "촬영", "등록", "판매개시"]
 # 흐름별 조건: 해당 조건을 만족하는 행이 하나라도 있는 스타일 수
 _flow_conditions = {
@@ -857,9 +855,9 @@ flow_df = flow_df.sort_values(by=["_정렬키", "styleCode"], ascending=[True, T
 flow_df["_촬영"] = flow_df["__shot_done"].map(lambda x: "O" if (pd.notna(x) and int(x) == 1) else "X")
 flow_df["_등록"] = flow_df["isRegistered"].map(lambda x: "O" if (pd.notna(x) and x == 1) else "X")
 
-# ----------------------------
+
 # 상세 테이블 (NO, 스타일코드, 상품명, 컬러, 입고/출고/재고, 촬영, 등록, 상태) — 판매 열 제거
-# ----------------------------
+
 st.subheader(f"상세 현황 · {selected_flow}")
 
 display_df = flow_df.copy()
