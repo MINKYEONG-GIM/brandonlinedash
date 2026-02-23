@@ -933,3 +933,25 @@ st.download_button(
     file_name=f"상세현황_{selected_flow}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 )
+
+import pandas as pd
+
+# 예시: 전체 스타일코드 리스트
+all_styles = pd.DataFrame({
+    "style_code": [
+        "MIA0AG20SS", "MIA0AG21SS", "MIA0AG22SS", # ... 전체 미쏘 스타일코드
+    ]
+})
+
+# 예시: 실제 발주 데이터에서 가져온 스타일코드 리스트
+order_styles = pd.DataFrame({
+    "style_code": [
+        "MIA0AG20SS", "MIA0AG22SS", # ... 일부만 들어온 발주 스타일코드
+    ]
+})
+
+# 1. 누락된 스타일코드 확인
+missing_styles = all_styles[~all_styles["style_code"].isin(order_styles["style_code"])]
+
+print(f"누락된 스타일코드 수: {len(missing_styles)}")
+print(missing_styles)
