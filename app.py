@@ -871,7 +871,6 @@ display_df = display_df[show_cols]
 display_df = display_df.rename(columns={
     "styleCode": "스타일코드",
     "productName": "상품명",
-    "colorName": "컬러",
     "inboundQty": "입고량",
     "outboundQty": "출고량",
     "stockQty": "재고량",
@@ -889,7 +888,7 @@ def to_excel(df):
 
 excel_data = to_excel(display_df)
 st.download_button(
-    label="Download",
+    label="엑셀 다운로드하기",
     data=excel_data,
     file_name=f"상세현황_{selected_flow}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
