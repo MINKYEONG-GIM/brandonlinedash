@@ -649,11 +649,11 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
         items_df.drop(columns=["_styleCode"], inplace=True, errors="ignore")
 
 
-# 단계상태 생성 (모든 스타일코드는 하나의 상태만 가짐)
+# 단계상태 생성
 
 items_df["단계상태"] = items_df.apply(compute_status, axis=1)
 
-# 연도·시즌: 시즌은 항상 시즌(Now) 열에서 사용(ensure_year_season_from_columns에서 년도(Now)+시즌(Now)로 이미 채움). 연도(_year)만 스타일코드에서 보조 사용.
+# 연도·시즌: 시즌은 항상 시즌(Now) 열에서 사용. 연도(_year)만 스타일코드에서 보조 사용.
 items_df["_year"] = items_df.apply(lambda row: year_from_style_code(row["styleCode"], row["brand"]), axis=1)
 empty_year = items_df["_year"] == ""
 if empty_year.any():
@@ -661,7 +661,6 @@ if empty_year.any():
 
 
 # 필터 영역
-
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     brand_options = sorted(items_df["brand"].unique())
@@ -710,20 +709,6 @@ total_n = filtered_df["styleCode"].nunique()
 if total_n == 0:
     st.info("선택한 조건에 맞는 데이터가 없습니다.")
     st.stop()
-
-# 스냅샷 증감 (카드에 함께 표시용)
-deltas = None
-if snapshots_sheet_name and snapshots_sheet_name.strip():
-    snapshots_df = load_sheet_as_dataframe(
-        gs_client, spreadsheet_id, sheet_name=snapshots_sheet_name.strip()
-    )
-    if snapshots_df is not None and len(snapshots_df) >= 2:
-        snap_cols = ["inboundDone", "outboundDone", "shotDone", "registeredDone", "onSaleDone"]
-        for c in snap_cols:
-            if c in snapshots_df.columns:
-                snapshots_df[c] = pd.to_numeric(snapshots_df[c], errors="coerce").fillna(0).astype(int)
-        deltas = compute_flow_deltas(snapshots_df)
-
 
 # 흐름 집계 카드 (스타일 수 기준: 해당 단계 1건이라도 있으면 스타일 포함)
 
@@ -809,7 +794,7 @@ flow_df["_촬영"] = flow_df["__shot_done"].map(lambda x: "O" if (pd.notna(x) an
 flow_df["_등록"] = flow_df["isRegistered"].map(lambda x: "O" if (pd.notna(x) and x == 1) else "X")
 
 
-# 상세 테이블 (NO, 스타일코드, 상품명, 컬러, 입고/출고/재고, 촬영, 등록, 상태) — 판매 열 제거
+# 상세 테이블
 
 st.subheader(f"상세 현황 · {selected_flow}")
 
@@ -839,7 +824,7 @@ def to_excel(df):
 
 excel_data = to_excel(display_df)
 st.download_button(
-    label="Download",
+    label="엑셀 다운로드하기",
     data=excel_data,
     file_name=f"상세현황_{selected_flow}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
