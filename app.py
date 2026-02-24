@@ -645,6 +645,8 @@ if gs_client and spreadsheet_ids and "styleCode" in items_df.columns and "brand"
         items_df["__shot_done"] = merged["__shot_done"].fillna(0).astype(int)
         items_df["isRegistered"] = merged["isRegistered"].fillna(0).astype(int)
         items_df.drop(columns=["_styleCode"], inplace=True, errors="ignore")
+        # 등록된 상품은 촬영 완료로 간주
+        items_df.loc[items_df["isRegistered"] == 1, "__shot_done"] = 1
 
 
 # 단계상태 생성
