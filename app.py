@@ -59,7 +59,7 @@ def open_or_create_spreadsheet(client, spreadsheet_id=None, spreadsheet_title=No
         return client.create(title)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600)
 def _cached_load_sheet(spreadsheet_id: str, sheet_name: str, header_row: int):
     if not spreadsheet_id or not str(spreadsheet_id).strip():
         return None
