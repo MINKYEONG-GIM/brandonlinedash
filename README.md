@@ -1,1 +1,1 @@
-# brandonlinedash
+등록일자가 있으면 등록스타일수로 판단
